@@ -144,6 +144,7 @@ MIDDLEWARE = [
     # Our middleware
     'talentmap_api.common.middleware.IE11Middleware',
     'talentmap_api.common.middleware.SecurityHeadersMiddleware',
+    'talentmap_api.common.middleware.TokenActivityMiddleware',
 ]
 
 if DEBUG:
@@ -470,6 +471,7 @@ SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'  # Lax (not Strict) to preserve SAML2 POST binding flow
 SESSION_COOKIE_AGE = 900  # 15 minutes in seconds
+SESSION_SAVE_EVERY_REQUEST = True  # Refresh cookie on each request for inactivity-based expiry
 
 # STIG V-220630: CSRF cookie hardening
 CSRF_COOKIE_SECURE = not DEBUG

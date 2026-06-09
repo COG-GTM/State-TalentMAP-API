@@ -50,3 +50,45 @@ class SecurityHeadersMiddleware:
         response['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
 
         return response
+
+
+class TokenActivityMiddleware:
+    '''
+    STIG V-220630: Converts the absolute token timeout into an inactivity
+    timeout by refreshing the token's ``created`` timestamp on each
+    authenticated request.  A cache guard throttles DB writes so the
+    timestamp is only updated once per minute per token.
+    '''
+
+    REFRESH_INTERVAL_SECONDS = 60  # only write to DB once per minute
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        self._refresh_token(request)
+        return response
+
+    def _refresh_token(self, request):
+        from django.utils import timezone
+        from django.core.cache import cache
+
+        user = getattr(request, 'user', None)
+        auth = getattr(request, 'auth', None)
+
+        if user is None or not user.is_authenticated or auth is None:
+            return
+
+        # Only act on ExpiringToken instances
+        from rest_framework_expiring_authtoken.models import ExpiringToken
+        if not isinstance(auth, ExpiringToken):
+            return
+
+        cache_key = f'token_refresh_{auth.pk}'
+        if cache.get(cache_key):
+            return  # Already refreshed recently
+
+        auth.created = timezone.now()
+        auth.save(update_fields=['created'])
+        cache.set(cache_key, True, self.REFRESH_INTERVAL_SECONDS)
