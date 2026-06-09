@@ -57,11 +57,16 @@ DEBUG = bool_env_variable("DJANGO_DEBUG")
 # Whether to enable saml2 endpoints
 ENABLE_SAML2 = bool_env_variable("ENABLE_SAML2")
 
-# This is * for now, but should be set to a proper host when deployed
-ALLOWED_HOSTS = ['*']
+# STIG V-220641: Restrict Host header to prevent HTTP Host header attacks.
+# Configure via DJANGO_ALLOWED_HOSTS env var (comma-separated).
+ALLOWED_HOSTS = list(filter(None, get_delineated_environment_variable(
+    'DJANGO_ALLOWED_HOSTS', '').split(',')))
 
-# CORS Settings
-CORS_ORIGIN_ALLOW_ALL = True
+# CORS Settings — NIST SC-8: restrict cross-origin requests to known frontends.
+# Configure via DJANGO_CORS_ALLOWED_ORIGINS env var (comma-separated).
+CORS_ORIGIN_ALLOW_ALL = False
+CORS_ALLOWED_ORIGINS = list(filter(None, get_delineated_environment_variable(
+    'DJANGO_CORS_ALLOWED_ORIGINS', '').split(',')))
 
 # Login paths
 LOGIN_URL = 'rest_framework:login'
@@ -72,8 +77,8 @@ if ENABLE_SAML2:
     LOGIN_URL = '/saml2/login/'
     SESSION_EXPIRE_AT_BROWSER_CLOSE = bool_env_variable('SAML2_SESSION_EXPIRE_AT_BROWSER_CLOSE')
 
-# Authorization token lifetime
-EXPIRING_TOKEN_LIFESPAN = datetime.timedelta(days=1)
+# STIG V-220630: Session timeout must not exceed 15 minutes of inactivity.
+EXPIRING_TOKEN_LIFESPAN = datetime.timedelta(minutes=15)
 
 # Authentication backends
 AUTHENTICATION_BACKENDS = (
@@ -102,7 +107,6 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'rest_framework_expiring_authtoken',
     'rest_framework_swagger',
-    'debug_toolbar',
     'djangosaml2',
     'simple_history',
 
@@ -124,6 +128,10 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+
+    # Third-party — CorsMiddleware must be before CommonMiddleware
+    'corsheaders.middleware.CorsMiddleware',
+
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -131,13 +139,16 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 
     # Third-party
-    'corsheaders.middleware.CorsMiddleware',
-    'debug_toolbar.middleware.DebugToolbarMiddleware',
     'simple_history.middleware.HistoryRequestMiddleware',
 
     # Our middleware
     'talentmap_api.common.middleware.IE11Middleware',
+    'talentmap_api.common.middleware.SecurityHeadersMiddleware',
+    'talentmap_api.common.middleware.TokenActivityMiddleware',
 ]
+
+if DEBUG:
+    MIDDLEWARE.append('debug_toolbar.middleware.DebugToolbarMiddleware')
 
 ROOT_URLCONF = 'talentmap_api.urls'
 
@@ -179,7 +190,14 @@ REST_FRAMEWORK = {
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
-    }
+    },
+    # Real cache for TokenActivityMiddleware throttle — LocMemCache is
+    # sufficient for single-process deployments; swap to Redis/Memcached
+    # for multi-process (gunicorn prefork, etc.).
+    'token_throttle': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'token-throttle',
+    },
 }
 
 
@@ -210,7 +228,7 @@ if ENABLE_SAML2:
     }
 
     SAML_CONFIG = {
-        "strict": False,
+        "strict": True,
 
         # full path to the xmlsec1 binary program
         'xmlsec_binary': get_delineated_environment_variable('SAML2_XMLSEC1_PATH'),
@@ -229,7 +247,7 @@ if ENABLE_SAML2:
             # We are a service provider
             'sp': {
                 'name': 'TalentMAP',
-                'allow_unsolicited': True,
+                'allow_unsolicited': False,
                 'name_id_format': saml2.saml.NAMEID_FORMAT_PERSISTENT,
                 'endpoints': {
                     # url and binding to the assetion consumer service view
@@ -443,10 +461,44 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# Debug toolbar settings
+# Debug toolbar settings — only active when DEBUG is True
+if DEBUG:
+    INSTALLED_APPS.append('debug_toolbar')
+
 DEBUG_TOOLBAR_CONFIG = {
     "SHOW_TOOLBAR_CALLBACK": lambda request: DEBUG
 }
+
+# ---------------------------------------------------------------------------
+# STIG / NIST 800-53 Security Hardening
+# ---------------------------------------------------------------------------
+
+# STIG V-220630: Secure session cookies
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'  # Lax (not Strict) to preserve SAML2 POST binding flow
+SESSION_COOKIE_AGE = 900  # 15 minutes in seconds
+SESSION_SAVE_EVERY_REQUEST = True  # Refresh cookie on each request for inactivity-based expiry
+
+# STIG V-220630: CSRF cookie hardening
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+# STIG V-220634 / NIST SC-8: Enforce HTTPS via HSTS
+SECURE_HSTS_SECONDS = 31536000  # 1 year
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SECURE_SSL_REDIRECT = not DEBUG
+
+# STIG V-220641 / NIST SI-11: Prevent MIME-type sniffing
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# XSS protection
+SECURE_BROWSER_XSS_FILTER = True
+
+# Clickjacking protection
+X_FRAME_OPTIONS = 'DENY'
 
 # Internationalization
 # https://docs.djangoproject.com/en/1.11/topics/i18n/

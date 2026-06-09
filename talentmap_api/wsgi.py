@@ -34,7 +34,7 @@ def load_environment_script(file):
                 # print(f"Found setup_environment.sh variable: {variable.group(1)}={variable.group(2)}")
                 # Store the variable, and strip any extra apostrophes or quotation marks
                 environment_file[variable.group(1)] = variable.group(2).replace("\'", "").replace("\"", "")
-    except:
+    except Exception:
         print(f'TalentMAP: wsgi.py unable to load environment, does {file} exist?')
         raise
 
