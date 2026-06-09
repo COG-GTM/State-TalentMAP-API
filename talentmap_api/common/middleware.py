@@ -72,7 +72,7 @@ class TokenActivityMiddleware:
 
     def _refresh_token(self, request):
         from django.utils import timezone
-        from django.core.cache import cache
+        from django.core.cache import caches
 
         user = getattr(request, 'user', None)
         auth = getattr(request, 'auth', None)
@@ -85,6 +85,8 @@ class TokenActivityMiddleware:
         if not isinstance(auth, ExpiringToken):
             return
 
+        # Use the dedicated LocMemCache (not the default DummyCache)
+        cache = caches['token_throttle']
         cache_key = f'token_refresh_{auth.pk}'
         if cache.get(cache_key):
             return  # Already refreshed recently

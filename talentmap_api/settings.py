@@ -190,7 +190,14 @@ REST_FRAMEWORK = {
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
-    }
+    },
+    # Real cache for TokenActivityMiddleware throttle — LocMemCache is
+    # sufficient for single-process deployments; swap to Redis/Memcached
+    # for multi-process (gunicorn prefork, etc.).
+    'token_throttle': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'token-throttle',
+    },
 }
 
 
