@@ -108,4 +108,10 @@ export SAML2_ADMINISTRATIVE_POC_LAST_NAME=''
 export SAML2_ADMINISTRATIVE_POC_COMPANY=''
 export SAML2_ADMINISTRATIVE_POC_EMAIL=''
 
+# Allowed hosts (comma-separated) — STIG V-220641
+export DJANGO_ALLOWED_HOSTS='localhost,127.0.0.1'
+
+# Allowed CORS origins (comma-separated) — NIST SC-8
+export DJANGO_CORS_ALLOWED_ORIGINS='http://localhost:3000'
+
 export FSBID_API_URL='http://mock_fsbid:3333'

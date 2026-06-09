@@ -231,7 +231,7 @@ class SavedSearchSerializer(PrefetchedSerializer):
         # Get our viewset using the endpoint
         try:
             view = resolve_path_to_view(endpoint)
-        except:
+        except Exception:
             view = None
         finally:
             if not view:

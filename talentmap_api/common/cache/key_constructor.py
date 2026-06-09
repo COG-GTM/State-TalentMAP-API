@@ -23,10 +23,12 @@ class TalentMAPKeyConstructor(DefaultKeyConstructor):
     path_bit = PathKeyBit()
     request_params = bits.QueryParamsKeyBit()
 
-    def prepare_key(self, key_dict):  # nosec We're OK to use MD5 here since it isn't for cryptographic purposes
-        key_dict = order_dict(key_dict)  # We order the dict to ensure something like ?q=german&code=1 == ?code=1&q=german
+    def prepare_key(self, key_dict):
+        # STIG V-220633: Replace MD5 with SHA-256 — MD5 is prohibited by
+        # NIST SP 800-131A even for non-cryptographic use in federal systems.
+        key_dict = order_dict(key_dict)
         key_dict = json.dumps(key_dict)
-        key_hex = hashlib.md5(key_dict.encode('utf-8')).hexdigest()
+        key_hex = hashlib.sha256(key_dict.encode('utf-8')).hexdigest()
         return key_hex
 
 

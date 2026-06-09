@@ -314,7 +314,7 @@ def in_group_or_403(user, group_name):
     '''
     try:
         group = get_group_by_name(group_name)
-    except:
+    except Exception:
         raise PermissionDenied
     if group not in user.groups.all():
         raise PermissionDenied
@@ -345,7 +345,7 @@ def in_superuser_group(user):
     try:
         group = get_group_by_name("superuser")
         return group in user.groups.all()
-    except:
+    except Exception:
         return False
 
 

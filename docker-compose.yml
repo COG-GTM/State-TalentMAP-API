@@ -18,6 +18,8 @@ services:
       - DJANGO_SECRET_KEY=development_secret_key
       - DATABASE_URL=postgres://talentmap-user@db/talentmap
       - DJANGO_DEBUG=true
+      - DJANGO_ALLOWED_HOSTS=localhost,0.0.0.0
+      - DJANGO_CORS_ALLOWED_ORIGINS=http://localhost:3000
   db:
     image: postgres:9.6.3
     volumes:
