@@ -28,10 +28,12 @@ pv = {
 
 @pytest.mark.django_db()
 def test_favorite_action_endpoints(authorized_client, authorized_user):
-   with patch('talentmap_api.fsbid.services.requests.get') as mock_get:
-      mock_get.return_value = Mock(ok=True)
-      mock_get.return_value.json.return_value = [pv]
-      
+   with patch('talentmap_api.fsbid.services.get_client') as mock_get_client:
+      client = Mock()
+      mock_get_client.return_value = client
+      client.get.return_value = Mock(ok=True)
+      client.get.return_value.json.return_value = [pv]
+
       response = authorized_client.get(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
 
       assert response.status_code == status.HTTP_404_NOT_FOUND

@@ -38,8 +38,10 @@ def test_bidder_fixture(authorized_user):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("test_bidder_fixture")
 def test_projected_vacancies_actions(authorized_client, authorized_user):
-   with patch('talentmap_api.fsbid.services.requests.get') as mock_get:
-      mock_get.return_value = Mock(ok=True)
-      mock_get.return_value.json.return_value = { "positions": [pv], "pagination": { "count": 0, "limit": 0 } }
+   with patch('talentmap_api.fsbid.services.get_client') as mock_get_client:
+      client = Mock()
+      mock_get_client.return_value = client
+      client.get.return_value = Mock(ok=True)
+      client.get.return_value.json.return_value = { "positions": [pv], "pagination": { "count": 0, "limit": 0 } }
       response = authorized_client.get(f'/api/v1/fsbid/projected_vacancies')
       assert response.json()["results"][0]['id'] == [pv][0]['pos_id']

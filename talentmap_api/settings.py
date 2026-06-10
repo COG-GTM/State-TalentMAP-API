@@ -469,3 +469,10 @@ STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'talentmap_api/static/')
 
 FSBID_API_URL = get_delineated_environment_variable('FSBID_API_URL', 'http://mock_fsbid:3333')
+
+# FSBid client resilience settings
+FSBID_TIMEOUT = (5, 30)                   # (connect, read) in seconds
+FSBID_RETRY_TOTAL = 3                     # max retry attempts
+FSBID_RETRY_BACKOFF_FACTOR = 0.5          # exponential backoff multiplier
+FSBID_CIRCUIT_FAILURE_THRESHOLD = 5       # consecutive failures before circuit opens
+FSBID_CIRCUIT_RECOVERY_TIMEOUT = 30       # seconds before half-open probe

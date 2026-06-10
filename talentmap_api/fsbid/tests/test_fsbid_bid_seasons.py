@@ -21,8 +21,10 @@ def test_bidder_fixture(authorized_user):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("test_bidder_fixture")
 def test_bid_seasons_actions(authorized_client, authorized_user):
-   with patch('talentmap_api.fsbid.services.requests.get') as mock_get:
-      mock_get.return_value = Mock(ok=True)
-      mock_get.return_value.json.return_value = [bs]
+   with patch('talentmap_api.fsbid.services.get_client') as mock_get_client:
+      client = Mock()
+      mock_get_client.return_value = client
+      client.get.return_value = Mock(ok=True)
+      client.get.return_value.json.return_value = [bs]
       response = authorized_client.get(f'/api/v1/fsbid/bid_seasons')
       assert response.json()[0]['id'] == [bs][0]['bsn_id']
