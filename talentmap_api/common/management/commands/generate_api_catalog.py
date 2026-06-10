@@ -123,7 +123,7 @@ class Command(BaseCommand):
         for p in perms:
             if callable(p) and not isinstance(p, type):
                 inner = getattr(p, "__self__", None) or p
-                result.append(type(inner).__name__ if hasattr(inner, "__name__") else str(p))
+                result.append(inner.__name__ if hasattr(inner, "__name__") else str(p))
             elif isinstance(p, type):
                 result.append(p.__name__)
             else:
