@@ -26,6 +26,12 @@ class FSBidUnavailableException(APIException):
     default_code = 'fsbid_unavailable'
 
 
+class FSBidRejectedException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = 'The bidding service rejected the request.'
+    default_code = 'fsbid_rejected'
+
+
 def fsbid_call(func):
     '''
     Translates upstream request failures into a DRF APIException so views
@@ -35,6 +41,13 @@ def fsbid_call(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
+        except requests.exceptions.HTTPError as e:
+            upstream_status = e.response.status_code if e.response is not None else None
+            if upstream_status and 400 <= upstream_status < 500:
+                logger.warning("FSBid rejected request in %s with status %s", func.__name__, upstream_status)
+                raise FSBidRejectedException()
+            logger.exception("FSBid request failed in %s with status %s", func.__name__, upstream_status)
+            raise FSBidUnavailableException()
         except requests.exceptions.RequestException:
             logger.exception("FSBid request failed in %s", func.__name__)
             raise FSBidUnavailableException()
