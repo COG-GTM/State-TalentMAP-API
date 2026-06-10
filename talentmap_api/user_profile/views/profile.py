@@ -88,5 +88,5 @@ class OfficerAssignmentHistoryView(FieldLimitableSerializerMixin,
     def get_queryset(self):
         officer = get_object_or_404(UserProfile, pk=self.request.parser_context.get("kwargs").get("pk"))
         queryset = officer.assignments.all().order_by('-start_date')
-        self.serializer_class.prefetch_model(Assignment, queryset)
+        queryset = self.serializer_class.prefetch_model(Assignment, queryset)
         return queryset
