@@ -1,4 +1,3 @@
-import requests
 import logging
 
 from datetime import datetime
@@ -8,6 +7,12 @@ from urllib.parse import urlencode
 from django.conf import settings
 
 from talentmap_api.bidding.models import Bid
+from talentmap_api.fsbid.fsbid_client import get_client
+from talentmap_api.fsbid.fsbid_models import (
+    FSBidBidResponse,
+    FSBidProjectedVacanciesResponse,
+    FSBidBidSeason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,22 +23,29 @@ def user_bids(employee_id, position_id=None):
     '''
     Get bids for a user on a position or all if no position
     '''
-    bids = requests.get(f"{API_ROOT}/bids/?employeeId={employee_id}").json()
-    return [fsbid_bid_to_talentmap_bid(bid) for bid in bids if bid['cyclePosition']['cp_id'] == int(position_id)] if position_id else map(fsbid_bid_to_talentmap_bid, bids)
+    client = get_client()
+    response = client.get(f"{API_ROOT}/bids/?employeeId={employee_id}")
+    raw_bids = response.json()
+    bids = [FSBidBidResponse(**b).dict() for b in raw_bids]
+    if position_id:
+        return [fsbid_bid_to_talentmap_bid(bid) for bid in bids if bid['cyclePosition']['cp_id'] == int(position_id)]
+    return list(map(fsbid_bid_to_talentmap_bid, bids))
 
 
 def bid_on_position(userId, employeeId, cyclePositionId):
     '''
     Submits a bid on a position
     '''
-    return requests.post(f"{API_ROOT}/bids", data={"perdet_seq_num": employeeId, "cp_id": cyclePositionId, "userId": userId})
+    client = get_client()
+    return client.post(f"{API_ROOT}/bids", data={"perdet_seq_num": employeeId, "cp_id": cyclePositionId, "userId": userId})
 
 
 def remove_bid(employeeId, cyclePositionId):
     '''
     Removes a bid from the users bid list
     '''
-    return requests.delete(f"{API_ROOT}/bids?cp_id={cyclePositionId}&perdet_seq_num={employeeId}")
+    client = get_client()
+    return client.delete(f"{API_ROOT}/bids?cp_id={cyclePositionId}&perdet_seq_num={employeeId}")
 
 
 def get_bid_status(statusCode, handshakeCode):
@@ -133,10 +145,14 @@ def get_projected_vacancies(query, host=None):
     '''
     Gets projected vacancies from FSBid
     '''
-    response = requests.get(f"{API_ROOT}/projectedVacancies?{convert_pv_query(query)}").json()
-    projected_vacancies = map(fsbid_pv_to_talentmap_pv, response["positions"])
+    client = get_client()
+    url = f"{API_ROOT}/projectedVacancies?{convert_pv_query(query)}"
+    response = client.get(url)
+    raw_data = response.json()
+    validated = FSBidProjectedVacanciesResponse(**raw_data)
+    projected_vacancies = map(fsbid_pv_to_talentmap_pv, validated.dict()['positions'])
     return {
-       **get_pagination(query, response["pagination"]["count"], "/api/v1/fsbid/projected_vacancies/", host),
+       **get_pagination(query, validated.pagination.count, "/api/v1/fsbid/projected_vacancies/", host),
        "results": projected_vacancies
     }
 
@@ -258,9 +274,12 @@ def fsbid_pv_to_talentmap_pv(pv):
 
 
 def get_bid_seasons(bsn_future_vacancy_ind):
+    client = get_client()
     url = f"{API_ROOT}/bidSeasons?=bsn_future_vacancy_ind={bsn_future_vacancy_ind}" if bsn_future_vacancy_ind else f"{API_ROOT}/bidSeasons"
-    bid_seasons = requests.get(f"{API_ROOT}/bidSeasons").json()
-    return map(fsbid_bid_season_to_talentmap_bid_season, bid_seasons)
+    response = client.get(f"{API_ROOT}/bidSeasons")
+    raw_seasons = response.json()
+    seasons = [FSBidBidSeason(**bs).dict() for bs in raw_seasons]
+    return map(fsbid_bid_season_to_talentmap_bid_season, seasons)
 
 
 def fsbid_bid_season_to_talentmap_bid_season(bs):
