@@ -107,7 +107,7 @@ class FSBidClient(object):
             total=getattr(settings, 'FSBID_RETRY_TOTAL', 3),
             backoff_factor=getattr(settings, 'FSBID_RETRY_BACKOFF_FACTOR', 0.5),
             status_forcelist=[500, 502, 503, 504],
-            method_whitelist=['GET', 'POST', 'DELETE'],
+            method_whitelist=['GET', 'DELETE'],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount('http://', adapter)
