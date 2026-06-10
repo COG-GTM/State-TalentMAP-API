@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class FSBidBidSeasonsListView(APIView):
 
-    permission_classes = (IsAuthenticatedOrReadOnly,)
+    permission_classes = (IsAuthenticated,)
 
     @classmethod
     def get_extra_actions(cls):

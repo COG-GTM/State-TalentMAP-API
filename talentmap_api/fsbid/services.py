@@ -13,27 +13,38 @@ logger = logging.getLogger(__name__)
 
 API_ROOT = settings.FSBID_API_URL
 
+REQUEST_TIMEOUT = 30
+
 
 def user_bids(employee_id, position_id=None):
     '''
     Get bids for a user on a position or all if no position
     '''
-    bids = requests.get(f"{API_ROOT}/bids/?employeeId={employee_id}").json()
+    response = requests.get(f"{API_ROOT}/bids/", params={"employeeId": employee_id}, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    bids = response.json()
     return [fsbid_bid_to_talentmap_bid(bid) for bid in bids if bid['cyclePosition']['cp_id'] == int(position_id)] if position_id else map(fsbid_bid_to_talentmap_bid, bids)
 
 
-def bid_on_position(userId, employeeId, cyclePositionId):
+def bid_on_position(userId, employeeId, cyclePositionId, statusCode=None):
     '''
     Submits a bid on a position
     '''
-    return requests.post(f"{API_ROOT}/bids", data={"perdet_seq_num": employeeId, "cp_id": cyclePositionId, "userId": userId})
+    data = {"perdet_seq_num": employeeId, "cp_id": cyclePositionId, "userId": userId}
+    if statusCode is not None:
+        data["statusCode"] = statusCode
+    response = requests.post(f"{API_ROOT}/bids", data=data, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return response
 
 
 def remove_bid(employeeId, cyclePositionId):
     '''
     Removes a bid from the users bid list
     '''
-    return requests.delete(f"{API_ROOT}/bids?cp_id={cyclePositionId}&perdet_seq_num={employeeId}")
+    response = requests.delete(f"{API_ROOT}/bids", params={"cp_id": cyclePositionId, "perdet_seq_num": employeeId}, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return response
 
 
 def get_bid_status(statusCode, handshakeCode):
@@ -133,7 +144,9 @@ def get_projected_vacancies(query, host=None):
     '''
     Gets projected vacancies from FSBid
     '''
-    response = requests.get(f"{API_ROOT}/projectedVacancies?{convert_pv_query(query)}").json()
+    response = requests.get(f"{API_ROOT}/projectedVacancies?{convert_pv_query(query)}", timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    response = response.json()
     projected_vacancies = map(fsbid_pv_to_talentmap_pv, response["positions"])
     return {
        **get_pagination(query, response["pagination"]["count"], "/api/v1/fsbid/projected_vacancies/", host),
@@ -258,9 +271,10 @@ def fsbid_pv_to_talentmap_pv(pv):
 
 
 def get_bid_seasons(bsn_future_vacancy_ind):
-    url = f"{API_ROOT}/bidSeasons?=bsn_future_vacancy_ind={bsn_future_vacancy_ind}" if bsn_future_vacancy_ind else f"{API_ROOT}/bidSeasons"
-    bid_seasons = requests.get(f"{API_ROOT}/bidSeasons").json()
-    return map(fsbid_bid_season_to_talentmap_bid_season, bid_seasons)
+    params = {"bsn_future_vacancy_ind": bsn_future_vacancy_ind} if bsn_future_vacancy_ind else None
+    response = requests.get(f"{API_ROOT}/bidSeasons", params=params, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return map(fsbid_bid_season_to_talentmap_bid_season, response.json())
 
 
 def fsbid_bid_season_to_talentmap_bid_season(bs):
