@@ -21,12 +21,12 @@ from talentmap_api.fsbid.client import get_client
 logger = logging.getLogger(__name__)
 
 
-def user_bids(employee_id, position_id=None):
+def user_bids(employee_id, position_id=None, client=None):
     """
     Get bids for a user on a position or all if no position.
     Functionally equivalent to services.user_bids.
     """
-    client = get_client()
+    client = client or get_client()
     typed_bids = client.get_user_bids(str(employee_id))
 
     # Convert typed responses back to the raw dict format expected by
@@ -42,12 +42,12 @@ def user_bids(employee_id, position_id=None):
     return list(map(fsbid_bid_to_talentmap_bid, bids))
 
 
-def bid_on_position(userId, employeeId, cyclePositionId):
+def bid_on_position(userId, employeeId, cyclePositionId, client=None):
     """
     Submits a bid on a position.
     Functionally equivalent to services.bid_on_position.
     """
-    client = get_client()
+    client = client or get_client()
     return client.submit_bid(
         user_id=str(userId),
         employee_id=str(employeeId),
@@ -55,12 +55,12 @@ def bid_on_position(userId, employeeId, cyclePositionId):
     )
 
 
-def remove_bid(employeeId, cyclePositionId):
+def remove_bid(employeeId, cyclePositionId, client=None):
     """
     Removes a bid from the user's bid list.
     Functionally equivalent to services.remove_bid.
     """
-    client = get_client()
+    client = client or get_client()
     return client.remove_bid(
         employee_id=str(employeeId),
         cycle_position_id=str(cyclePositionId),
@@ -159,12 +159,12 @@ def fsbid_bid_to_talentmap_bid(data):
     }
 
 
-def get_projected_vacancies(query, host=None):
+def get_projected_vacancies(query, host=None, client=None):
     """
     Gets projected vacancies from FSBid.
     Uses typed client instead of raw requests.
     """
-    client = get_client()
+    client = client or get_client()
     query_string = convert_pv_query(query)
     result = client.get_projected_vacancies(query_string)
 
@@ -299,7 +299,7 @@ def fsbid_pv_to_talentmap_pv(pv):
     }
 
 
-def get_bid_seasons(future_vacancy_ind=None):
+def get_bid_seasons(future_vacancy_ind=None, client=None):
     """
     Gets all bid seasons from FSBid.
     Uses typed client instead of raw requests.
@@ -309,7 +309,7 @@ def get_bid_seasons(future_vacancy_ind=None):
     (always fetches all seasons regardless of filter). This implementation
     correctly passes the filter to FSBid, fixing the legacy bug.
     """
-    client = get_client()
+    client = client or get_client()
     typed_seasons = client.get_bid_seasons(future_vacancy_ind)
     return list(map(
         fsbid_bid_season_to_talentmap_bid_season,

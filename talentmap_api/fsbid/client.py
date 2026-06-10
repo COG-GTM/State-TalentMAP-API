@@ -417,10 +417,10 @@ class FSBidClient:
 
     def get_bid_seasons(self, future_vacancy_ind: Optional[str] = None) -> List['FSBidBidSeason']:
         """Get all bid seasons. Returns typed FSBidBidSeason objects."""
-        path = "/bidSeasons/"
+        params = {}
         if future_vacancy_ind:
-            path += f"?bsn_future_vacancy_ind={future_vacancy_ind}"
-        response = self._request("GET", path)
+            params["bsn_future_vacancy_ind"] = future_vacancy_ind
+        response = self._request("GET", "/bidSeasons", params=params or None)
         return [FSBidBidSeason(season) for season in response.json()]
 
 
