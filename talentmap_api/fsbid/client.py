@@ -321,13 +321,18 @@ class FSBidClient:
         )
 
     def remove_bid(self, employee_id: str, cycle_position_id: str) -> requests.Response:
-        """Remove a bid from the user's bid list."""
+        """Remove a bid from the user's bid list.
+
+        NOTE (.staterules exception): FSBid upstream API requires perdet_seq_num
+        as a query parameter on DELETE. Same mitigation as get_user_bids — PII is
+        sanitized in application logs; network-layer redaction is required.
+        """
         sanitized_emp = _sanitize_identifier(employee_id)
         logger.info("Removing bid for employee [%s] on position %s", sanitized_emp, cycle_position_id)
 
         return self._request(
-            "DELETE",
-            f"/bids?cp_id={cycle_position_id}&perdet_seq_num={employee_id}"
+            "DELETE", "/bids",
+            params={"cp_id": cycle_position_id, "perdet_seq_num": employee_id}
         )
 
     def get_projected_vacancies(self, query_params: str) -> FSBidPaginatedResponse:

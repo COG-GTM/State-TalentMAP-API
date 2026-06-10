@@ -283,9 +283,19 @@ def fsbid_pv_to_talentmap_pv(pv):
                 "total_bids": 0,
                 "in_grade": 0,
                 "at_skill": 0,
-                "in_grade_at_skill": 0
+                "in_grade_at_skill": 0,
+                "has_handshake_offered": False,
+                "has_handshake_accepted": False
             }
-        ]
+        ],
+        "latest_bidcycle": {
+            "id": 1,
+            "name": pv["bsn_descr_text"],
+            "cycle_start_date": "2018-08-15T19:17:30.065379Z",
+            "cycle_deadline_date": "2019-03-27T00:00:00Z",
+            "cycle_end_date": "2019-05-16T00:00:00Z",
+            "active": True
+        }
     }
 
 
