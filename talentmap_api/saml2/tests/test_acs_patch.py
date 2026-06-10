@@ -280,9 +280,16 @@ class TestCreateUnknownUserSetting:
         assert result.status_code == 302
         assert User.objects.filter(email='newuser@example.com').exists()
 
-    def test_explicit_create_unknown_user_false_passed_through(self):
-        """Caller can pass create_unknown_user=False explicitly."""
+    def test_explicit_create_unknown_user_false_still_creates_user(self):
+        """create_unknown_user=False is accepted but does NOT gate user creation.
+
+        The production code unconditionally calls User.objects.get_or_create()
+        at acs_patch.py:126 regardless of this parameter. This test documents
+        that behavior explicitly so a future change to add gating would be
+        caught as a regression.
+        """
         from talentmap_api.saml2.acs_patch import assertion_consumer_service
+        from django.contrib.auth.models import User
 
         request = _post_request(data={'SAMLResponse': 'dummyxml'})
 
@@ -302,7 +309,6 @@ class TestCreateUnknownUserSetting:
             mock_settings.LOGIN_REDIRECT_URL = 'https://app.example.com/login'
             result = assertion_consumer_service(request, create_unknown_user=False)
 
-        # The function still creates via get_or_create on User model
-        # regardless of create_unknown_user param (it's read but not
-        # used to gate creation in this implementation). Verify no crash.
         assert result.status_code == 302
+        # User is created despite create_unknown_user=False (param is unused)
+        assert User.objects.filter(email='another@example.com').exists()
