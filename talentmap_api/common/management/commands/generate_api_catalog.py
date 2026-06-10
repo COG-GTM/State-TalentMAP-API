@@ -104,12 +104,14 @@ class Command(BaseCommand):
 
     @staticmethod
     def _extract_methods(callback, view_class):
+        # For ViewSet routes, DRF stores the HTTP-method-to-action mapping
+        # in callback.actions (set by ViewSetMixin.as_view()).
+        actions = getattr(callback, 'actions', None)
+        if actions:
+            return sorted([m.upper() for m in actions.keys()])
         if view_class:
             http_methods = {"get", "post", "put", "patch", "delete", "head", "options"}
             return sorted([m.upper() for m in http_methods if hasattr(view_class, m)])
-        initkwargs = getattr(callback, "initkwargs", {})
-        if "actions" in initkwargs:
-            return sorted([m.upper() for m in initkwargs["actions"].keys()])
         return []
 
     @staticmethod
