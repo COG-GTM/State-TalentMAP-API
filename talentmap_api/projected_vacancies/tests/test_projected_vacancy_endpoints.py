@@ -28,26 +28,22 @@ pv = {
 
 @pytest.mark.django_db()
 def test_favorite_action_endpoints(authorized_client, authorized_user):
-   with patch('talentmap_api.fsbid.services.requests.get') as mock_get:
-      mock_get.return_value = Mock(ok=True)
-      mock_get.return_value.json.return_value = [pv]
-      
-      response = authorized_client.get(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
+   response = authorized_client.get(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
 
-      assert response.status_code == status.HTTP_404_NOT_FOUND
+   assert response.status_code == status.HTTP_404_NOT_FOUND
 
-      response = authorized_client.put(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
+   response = authorized_client.put(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
 
-      assert response.status_code == status.HTTP_204_NO_CONTENT
+   assert response.status_code == status.HTTP_204_NO_CONTENT
 
-      response = authorized_client.get(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
+   response = authorized_client.get(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
 
-      assert response.status_code == status.HTTP_204_NO_CONTENT
+   assert response.status_code == status.HTTP_204_NO_CONTENT
 
-      response = authorized_client.delete(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
+   response = authorized_client.delete(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
 
-      assert response.status_code == status.HTTP_204_NO_CONTENT
+   assert response.status_code == status.HTTP_204_NO_CONTENT
 
-      response = authorized_client.get(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
+   response = authorized_client.get(f'/api/v1/projected_vacancy/{pv["pos_id"]}/favorite/')
 
-      assert response.status_code == status.HTTP_404_NOT_FOUND
+   assert response.status_code == status.HTTP_404_NOT_FOUND

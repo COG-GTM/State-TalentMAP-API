@@ -15,4 +15,5 @@ COPY talentmap_api /app/talentmap_api/
 ADD requirements.txt wait-for-postgres.sh manage.py setup.cfg /app/
 
 RUN chmod +x wait-for-postgres.sh
+RUN pip install pip==20.2.4 setuptools==44.1.1
 RUN pip install -r requirements.txt
