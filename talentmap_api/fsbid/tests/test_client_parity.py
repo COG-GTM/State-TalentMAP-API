@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from unittest.mock import patch, MagicMock
 
+import requests
 from django.test import TestCase, override_settings
 
 from talentmap_api.fsbid import services as legacy_services
@@ -21,6 +22,7 @@ from talentmap_api.fsbid import services_v2 as modern_services
 from talentmap_api.fsbid.client import (
     FSBidClient, FSBidBidResponse, FSBidBidSeason,
     CircuitBreaker, CircuitState, _sanitize_identifier,
+    FSBidAPIError, FSBidConnectionError,
 )
 
 
@@ -408,6 +410,46 @@ class BidSeasonParityTest(TestCase):
         self.assertEqual(len(seasons), 1)
         self.assertIsInstance(seasons[0], FSBidBidSeason)
         self.assertEqual(seasons[0].bsn_id, "242")
+
+
+@override_settings(FSBID_API_URL="https://fsbid-test.state.gov/api/v1")
+class PIIExceptionSanitizationTest(TestCase):
+    """Verify PII never leaks through exception messages (AGENTS.md compliance)."""
+
+    @patch('requests.Session.request')
+    def test_http_error_does_not_expose_employee_id(self, mock_request):
+        """HTTPError re-raised as FSBidAPIError must not contain PII in str()."""
+        employee_id = "98765432"
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            f"404 Client Error for url: https://fsbid.state.gov/api/v1/bids/?employeeId={employee_id}",
+            response=mock_response
+        )
+        mock_request.return_value = mock_response
+
+        client = FSBidClient()
+        with self.assertRaises(FSBidAPIError) as ctx:
+            client.get_user_bids(employee_id)
+
+        # The sanitized exception must NOT contain the employee ID
+        self.assertNotIn(employee_id, str(ctx.exception))
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.method, "GET")
+
+    @patch('requests.Session.request')
+    def test_connection_error_does_not_expose_url(self, mock_request):
+        """Connection errors re-raised as FSBidConnectionError, no URL/PII."""
+        mock_request.side_effect = requests.exceptions.ConnectionError(
+            "Connection refused: https://fsbid.state.gov/api/v1/bids/?employeeId=98765432"
+        )
+
+        client = FSBidClient()
+        with self.assertRaises(FSBidConnectionError) as ctx:
+            client.get_user_bids("98765432")
+
+        self.assertNotIn("98765432", str(ctx.exception))
+        self.assertIn("ConnectionError", str(ctx.exception))
 
 
 @override_settings(FSBID_API_URL="https://fsbid-test.state.gov/api/v1")

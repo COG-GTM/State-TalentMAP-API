@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -26,6 +27,43 @@ from urllib3.util.retry import Retry
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Custom exception — strips PII from URLs before propagation
+# ---------------------------------------------------------------------------
+
+class FSBidAPIError(Exception):
+    """Sanitized FSBid API error that never exposes PII in str().
+
+    The requests library embeds the full URL (including query params with
+    employee IDs) in HTTPError.__str__(). This wrapper strips query strings
+    so PII cannot leak through Django's unhandled-exception logging.
+    """
+
+    def __init__(self, method: str, path: str, status_code: int, original: Exception):
+        self.method = method
+        self.path = path
+        self.status_code = status_code
+        self.original = original
+        # Preserve the response object for callers that need status inspection
+        self.response = getattr(original, 'response', None)
+        super().__init__(
+            f"FSBid {method.upper()} {path} failed with HTTP {status_code}"
+        )
+
+
+class FSBidConnectionError(Exception):
+    """Sanitized connection error — no URL/PII in message."""
+
+    def __init__(self, method: str, path: str, exc_type: str, original: Exception):
+        self.method = method
+        self.path = path
+        self.exc_type = exc_type
+        self.original = original
+        super().__init__(
+            f"FSBid {method.upper()} {path} connection failed: {exc_type}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +288,10 @@ class FSBidClient:
             recovery_timeout=circuit_recovery_timeout,
         )
 
-        # Configure session with retry adapter
+        # Configure session with retry adapter.
+        # NOTE (AGENTS.md exception): POST is intentionally excluded from
+        # allowed_methods. FSBid has no idempotency-key support, so retrying
+        # submit_bid on 503 could create duplicate bids. GET/DELETE are safe.
         self.session = requests.Session()
         retry_strategy = Retry(
             total=max_retries,
@@ -292,9 +333,10 @@ class FSBidClient:
 
         except requests.exceptions.HTTPError as exc:
             elapsed_ms = (time.time() - start_time) * 1000
+            status = exc.response.status_code if exc.response is not None else 0
             # 4xx = server responded (alive) but caller error;
             # 5xx = server error, count toward circuit breaker.
-            if exc.response is not None and exc.response.status_code >= 500:
+            if exc.response is not None and status >= 500:
                 self.circuit_breaker.record_failure()
             else:
                 # Any HTTP response (including 4xx) proves the server is up.
@@ -302,11 +344,11 @@ class FSBidClient:
                 self.circuit_breaker.record_success()
             logger.error(
                 "FSBid %s %s — HTTP %d in %.0fms",
-                method.upper(), path,
-                exc.response.status_code if exc.response is not None else 0,
-                elapsed_ms
+                method.upper(), path, status, elapsed_ms
             )
-            raise
+            # Re-raise as sanitized exception — original HTTPError str()
+            # embeds full URL with PII query params (AGENTS.md violation).
+            raise FSBidAPIError(method, path, status, exc) from exc
         except requests.exceptions.RequestException as exc:
             elapsed_ms = (time.time() - start_time) * 1000
             # Connection failures always count toward circuit breaker
@@ -315,7 +357,7 @@ class FSBidClient:
                 "FSBid %s %s — FAILED in %.0fms: %s",
                 method.upper(), path, elapsed_ms, type(exc).__name__
             )
-            raise
+            raise FSBidConnectionError(method, path, type(exc).__name__, exc) from exc
 
     # -------------------------------------------------------------------
     # Public API methods
