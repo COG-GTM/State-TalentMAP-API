@@ -113,57 +113,87 @@ class TestGetSoapClientTestMode:
 # ---------------------------------------------------------------------------
 
 class TestGetSoapClientNonTestMode:
+    """
+    Tests for the non-test (production) code path of get_soap_client.
+
+    Env var naming: get_delineated_environment_variable('WSDL_SSL_CERT')
+    resolves to {DJANGO_ENVIRONMENT_NAME}WSDL_SSL_CERT, falling back to
+    bare WSDL_SSL_CERT.  With DJANGO_ENVIRONMENT_NAME unset (default ''),
+    both lookups resolve to 'WSDL_SSL_CERT'.
+    """
 
     @mock.patch.dict(os.environ, {
-        'DJANGO_WSDL_SSL_CERT': '/fake/cert.pem',
-        'DJANGO_WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
+        'WSDL_SSL_CERT': '/fake/cert.pem',
+        'WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
     })
     @mock.patch('talentmap_api.integrations.synchronization_helpers.zeep.Client')
     @mock.patch('talentmap_api.integrations.synchronization_helpers.Transport')
-    def test_creates_real_client_with_cert(self, mock_transport, mock_zeep_client):
+    @mock.patch('talentmap_api.integrations.synchronization_helpers.Session')
+    def test_creates_client_with_cert_sets_session_verify(
+        self, mock_session_cls, mock_transport, mock_zeep_client
+    ):
+        mock_session = mock.MagicMock()
+        mock_session_cls.return_value = mock_session
         mock_zeep_client.return_value = mock.MagicMock()
         mock_zeep_client.return_value.wsdl.types.prefix_map = {}
         result = get_soap_client(test=False)
         mock_zeep_client.assert_called_once()
         assert result is not None
+        assert mock_session.verify == '/fake/cert.pem'
 
     @mock.patch.dict(os.environ, {
-        'DJANGO_WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
-    }, clear=False)
+        'WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
+    })
     @mock.patch('talentmap_api.integrations.synchronization_helpers.zeep.Client')
     @mock.patch('talentmap_api.integrations.synchronization_helpers.Transport')
-    def test_creates_client_without_cert(self, mock_transport, mock_zeep_client):
+    @mock.patch('talentmap_api.integrations.synchronization_helpers.Session')
+    def test_creates_client_without_cert_disables_verify(
+        self, mock_session_cls, mock_transport, mock_zeep_client
+    ):
+        mock_session = mock.MagicMock()
+        mock_session_cls.return_value = mock_session
         mock_zeep_client.return_value = mock.MagicMock()
         mock_zeep_client.return_value.wsdl.types.prefix_map = {}
-        # Remove any cert env var
-        os.environ.pop('DJANGO_WSDL_SSL_CERT', None)
-        client = get_soap_client(test=False)
-        assert client is not None
+        os.environ.pop('WSDL_SSL_CERT', None)
+        result = get_soap_client(test=False)
+        assert result is not None
+        assert mock_session.verify is False
 
     @mock.patch.dict(os.environ, {
-        'DJANGO_WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
+        'WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
         'DJANGO_SYNCHRONIZATION_HEADER_1': 'X-Custom=value1',
-    }, clear=False)
+    })
     @mock.patch('talentmap_api.integrations.synchronization_helpers.zeep.Client')
     @mock.patch('talentmap_api.integrations.synchronization_helpers.Transport')
-    def test_parses_synchronization_headers(self, mock_transport, mock_zeep_client):
+    @mock.patch('talentmap_api.integrations.synchronization_helpers.Session')
+    def test_parses_synchronization_headers(
+        self, mock_session_cls, mock_transport, mock_zeep_client
+    ):
+        mock_session = mock.MagicMock()
+        mock_session_cls.return_value = mock_session
         mock_zeep_client.return_value = mock.MagicMock()
         mock_zeep_client.return_value.wsdl.types.prefix_map = {}
-        os.environ.pop('DJANGO_WSDL_SSL_CERT', None)
-        client = get_soap_client(test=False)
-        assert client is not None
+        os.environ.pop('WSDL_SSL_CERT', None)
+        get_soap_client(test=False)
+        mock_session.headers.update.assert_called_once_with(
+            {'X-Custom': 'value1'}
+        )
 
     @mock.patch.dict(os.environ, {
-        'DJANGO_WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
+        'WSDL_LOCATION': 'http://fake.wsdl/service?wsdl',
         'DJANGO_SOAP_NS_OVERRIDE_1': 'ns0=custom_ns',
-    }, clear=False)
+    })
     @mock.patch('talentmap_api.integrations.synchronization_helpers.zeep.Client')
     @mock.patch('talentmap_api.integrations.synchronization_helpers.Transport')
-    def test_applies_namespace_overrides(self, mock_transport, mock_zeep_client):
+    @mock.patch('talentmap_api.integrations.synchronization_helpers.Session')
+    def test_applies_namespace_overrides(
+        self, mock_session_cls, mock_transport, mock_zeep_client
+    ):
+        mock_session_cls.return_value = mock.MagicMock()
         mock_client = mock.MagicMock()
         mock_client.wsdl.types.prefix_map = {'ns0': 'http://original.ns'}
         mock_zeep_client.return_value = mock_client
-        os.environ.pop('DJANGO_WSDL_SSL_CERT', None)
+        os.environ.pop('WSDL_SSL_CERT', None)
         get_soap_client(test=False)
         mock_client.set_ns_prefix.assert_called_once_with(
             'custom_ns', 'http://original.ns'
