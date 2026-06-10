@@ -21,7 +21,7 @@ from talentmap_api.fsbid.client import get_client
 logger = logging.getLogger(__name__)
 
 
-def user_bids(employee_id, position_id=None, client=None):
+def user_bids(employee_id, position_id=None, *, client=None):
     """
     Get bids for a user on a position or all if no position.
     Functionally equivalent to services.user_bids.
@@ -42,7 +42,7 @@ def user_bids(employee_id, position_id=None, client=None):
     return list(map(fsbid_bid_to_talentmap_bid, bids))
 
 
-def bid_on_position(userId, employeeId, cyclePositionId, client=None):
+def bid_on_position(userId, employeeId, cyclePositionId, *, client=None):
     """
     Submits a bid on a position.
     Functionally equivalent to services.bid_on_position.
@@ -55,7 +55,7 @@ def bid_on_position(userId, employeeId, cyclePositionId, client=None):
     )
 
 
-def remove_bid(employeeId, cyclePositionId, client=None):
+def remove_bid(employeeId, cyclePositionId, *, client=None):
     """
     Removes a bid from the user's bid list.
     Functionally equivalent to services.remove_bid.
@@ -159,7 +159,7 @@ def fsbid_bid_to_talentmap_bid(data):
     }
 
 
-def get_projected_vacancies(query, host=None, client=None):
+def get_projected_vacancies(query, host=None, *, client=None):
     """
     Gets projected vacancies from FSBid.
     Uses typed client instead of raw requests.
@@ -299,7 +299,7 @@ def fsbid_pv_to_talentmap_pv(pv):
     }
 
 
-def get_bid_seasons(future_vacancy_ind=None, client=None):
+def get_bid_seasons(future_vacancy_ind=None, *, client=None):
     """
     Gets all bid seasons from FSBid.
     Uses typed client instead of raw requests.
