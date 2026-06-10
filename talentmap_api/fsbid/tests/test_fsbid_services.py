@@ -231,6 +231,36 @@ class TestGetPagination:
         assert result["previous"] is None
         assert result["next"] is not None
 
+    def test_url_missing_query_separator(self):
+        """Documents pre-existing bug: URLs lack '?' between path and query string.
+
+        get_pagination builds ``{host}{base_url}{query.urlencode()}`` which
+        produces e.g. ``http://localhost/api/v1/test/page=3&limit=10`` instead
+        of ``http://localhost/api/v1/test/?page=3&limit=10``.
+        """
+        query = QueryDict(mutable=True)
+        query["page"] = "2"
+        query["limit"] = "10"
+        result = services.get_pagination(query, 50, "/api/v1/test/", "http://localhost")
+
+        # Current (buggy) behaviour: no '?' before query params
+        assert "test/page=" in result["next"]
+        assert "test/?" not in result["next"]
+
+    def test_page_zero_and_one_both_lack_previous(self):
+        """Documents pre-existing off-by-one: page>1 gate means both page 0
+        and page 1 produce no previous URL."""
+        q0 = QueryDict(mutable=True)
+        q0["page"] = "0"
+        q1 = QueryDict(mutable=True)
+        q1["page"] = "1"
+
+        r0 = services.get_pagination(q0, 100, "/api/v1/test/", "http://localhost")
+        r1 = services.get_pagination(q1, 100, "/api/v1/test/", "http://localhost")
+
+        assert r0["previous"] is None
+        assert r1["previous"] is None
+
 
 # ---------------------------------------------------------------------------
 # convert_pv_query
