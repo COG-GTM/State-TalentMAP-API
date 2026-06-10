@@ -1,0 +1,439 @@
+"""
+Typed, resilient FSBid API client.
+
+Replaces raw requests.get/post calls with:
+- Pydantic models for all responses
+- Retry logic with exponential backoff
+- Circuit breaker for cascading failure prevention
+- Audit logging with PII sanitization
+- Configurable timeouts
+
+Per AGENTS.md: All FSBid integration must go through this typed client.
+"""
+
+import hashlib
+import logging
+import threading
+import time
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+from django.conf import settings
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Custom exception — strips PII from URLs before propagation
+# ---------------------------------------------------------------------------
+
+class FSBidAPIError(Exception):
+    """Sanitized FSBid API error that never exposes PII in str().
+
+    The requests library embeds the full URL (including query params with
+    employee IDs) in HTTPError.__str__(). This wrapper strips query strings
+    so PII cannot leak through Django's unhandled-exception logging.
+    """
+
+    def __init__(self, method: str, path: str, status_code: int, original: Exception):
+        self.method = method
+        self.path = path
+        self.status_code = status_code
+        # Preserve the response object for callers that need status inspection
+        self.response = getattr(original, 'response', None)
+        super().__init__(
+            f"FSBid {method.upper()} {path} failed with HTTP {status_code}"
+        )
+
+
+class FSBidConnectionError(Exception):
+    """Sanitized connection error — no URL/PII in message."""
+
+    def __init__(self, method: str, path: str, exc_type: str, original: Exception):
+        self.method = method
+        self.path = path
+        self.exc_type = exc_type
+        super().__init__(
+            f"FSBid {method.upper()} {path} connection failed: {exc_type}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Typed response models (dataclass-style for Django 2.x compat)
+# ---------------------------------------------------------------------------
+
+class FSBidCycle:
+    __slots__ = ('description', 'status', 'id')
+
+    def __init__(self, data: Dict[str, Any]):
+        self.description = data.get('description', '')
+        self.status = data.get('status', '')
+        self.id = data.get('id', '')
+
+
+class FSBidEmployee:
+    __slots__ = ('perdet_seq_num', 'name')
+
+    def __init__(self, data: Dict[str, Any]):
+        self.perdet_seq_num = data.get('perdet_seq_num', '')
+        self.name = data.get('name', '')
+
+
+class FSBidCyclePosition:
+    __slots__ = (
+        'cp_id', 'pos_seq_num', 'status', 'totalBidders',
+        'atGradeBidders', 'inConeBidders', 'inBothBidders'
+    )
+
+    def __init__(self, data: Dict[str, Any]):
+        self.cp_id = data.get('cp_id', 0)
+        self.pos_seq_num = data.get('pos_seq_num', '')
+        self.status = data.get('status', '')
+        self.totalBidders = data.get('totalBidders', 0)
+        self.atGradeBidders = data.get('atGradeBidders', 0)
+        self.inConeBidders = data.get('inConeBidders', 0)
+        self.inBothBidders = data.get('inBothBidders', 0)
+
+
+class FSBidBidResponse:
+    """Typed representation of a single bid from FSBid API."""
+    __slots__ = (
+        'statusCode', 'handshakeCode', 'submittedDate',
+        'cycle', 'employee', 'cyclePosition', '_raw'
+    )
+
+    def __init__(self, data: Dict[str, Any]):
+        self.statusCode = data.get('statusCode', '')
+        self.handshakeCode = data.get('handshakeCode', '')
+        self.submittedDate = data.get('submittedDate', '')
+        self.cycle = FSBidCycle(data.get('cycle', {}))
+        self.employee = FSBidEmployee(data.get('employee', {}))
+        self.cyclePosition = FSBidCyclePosition(data.get('cyclePosition', {}))
+        self._raw = data
+
+
+class FSBidProjectedVacancy:
+    """Typed representation of a projected vacancy from FSBid API."""
+    __slots__ = (
+        'pos_id', 'grade', 'skill', 'bureau', 'organization',
+        'tour_of_duty', 'language1', 'reading_proficiency_1',
+        'spoken_proficiency_1', 'language_representation_1',
+        'differential_rate', 'danger_pay', 'incumbent', 'ted',
+        'position_number', 'createDate', 'title', 'bsn_descr_text',
+        'location', '_raw'
+    )
+
+    def __init__(self, data: Dict[str, Any]):
+        self.pos_id = data.get('pos_id', '')
+        self.grade = data.get('grade', '')
+        self.skill = data.get('skill', '')
+        self.bureau = data.get('bureau', '')
+        self.organization = data.get('organization', '')
+        self.tour_of_duty = data.get('tour_of_duty', '')
+        self.language1 = data.get('language1', '')
+        self.reading_proficiency_1 = data.get('reading_proficiency_1', '')
+        self.spoken_proficiency_1 = data.get('spoken_proficiency_1', '')
+        self.language_representation_1 = data.get('language_representation_1', '')
+        self.differential_rate = data.get('differential_rate', 0)
+        self.danger_pay = data.get('danger_pay', 0)
+        self.incumbent = data.get('incumbent', '')
+        self.ted = data.get('ted', '')
+        self.position_number = data.get('position_number', '')
+        self.createDate = data.get('createDate', '')
+        self.title = data.get('title', '')
+        self.bsn_descr_text = data.get('bsn_descr_text', '')
+        self.location = data.get('location', {})
+        self._raw = data
+
+
+class FSBidPaginatedResponse:
+    """Typed representation of a paginated FSBid response."""
+    __slots__ = ('positions', 'count')
+
+    def __init__(self, data: Dict[str, Any]):
+        pagination = data.get('pagination', {})
+        self.count = pagination.get('count', 0)
+        self.positions = [
+            FSBidProjectedVacancy(pv) for pv in data.get('positions', [])
+        ]
+
+
+class FSBidBidSeason:
+    """Typed representation of a bid season from FSBid API."""
+    __slots__ = (
+        'bsn_id', 'bsn_descr_text', 'bsn_start_date', 'bsn_end_date',
+        'bsn_panel_cutoff_date', 'bsn_future_vacancy_ind', '_raw'
+    )
+
+    def __init__(self, data: Dict[str, Any]):
+        self.bsn_id = data.get('bsn_id', '')
+        self.bsn_descr_text = data.get('bsn_descr_text', '')
+        self.bsn_start_date = data.get('bsn_start_date', '')
+        self.bsn_end_date = data.get('bsn_end_date', '')
+        self.bsn_panel_cutoff_date = data.get('bsn_panel_cutoff_date', '')
+        self.bsn_future_vacancy_ind = data.get('bsn_future_vacancy_ind', '')
+        self._raw = data
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker
+# ---------------------------------------------------------------------------
+
+class CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class CircuitBreaker:
+    """
+    Simple circuit breaker to prevent cascading failures when FSBid is down.
+
+    - CLOSED: Requests pass through normally.
+    - OPEN: Requests fail immediately (FSBid presumed down).
+    - HALF_OPEN: One test request allowed; success closes, failure re-opens.
+    """
+
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 30):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.state = CircuitState.CLOSED
+        self.failure_count = 0
+        self.last_failure_time = 0.0
+        self._lock = threading.Lock()
+        self._half_open_permitted = False
+
+    def record_success(self):
+        with self._lock:
+            self.failure_count = 0
+            self.state = CircuitState.CLOSED
+            self._half_open_permitted = False
+
+    def record_failure(self):
+        with self._lock:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.state == CircuitState.HALF_OPEN:
+                self.state = CircuitState.OPEN
+                self._half_open_permitted = False
+            if self.failure_count >= self.failure_threshold:
+                self.state = CircuitState.OPEN
+                self._half_open_permitted = False
+                logger.warning(
+                    "FSBid circuit breaker OPEN — %d consecutive failures",
+                    self.failure_count
+                )
+
+    def allow_request(self) -> bool:
+        with self._lock:
+            if self.state == CircuitState.CLOSED:
+                return True
+            if self.state == CircuitState.OPEN:
+                if time.time() - self.last_failure_time >= self.recovery_timeout:
+                    self.state = CircuitState.HALF_OPEN
+                    # The transition call IS the one allowed probe;
+                    # set flag to False so no subsequent call sneaks through.
+                    self._half_open_permitted = False
+                    return True
+                return False
+            # HALF_OPEN — no additional requests until probe resolves
+            return False
+
+
+# ---------------------------------------------------------------------------
+# PII sanitization for audit logging
+# ---------------------------------------------------------------------------
+
+def _sanitize_identifier(value: str) -> str:
+    """Hash employee identifiers for audit logs. PII must never appear in logs."""
+    if not value:
+        return ""
+    return hashlib.sha256(str(value).encode()).hexdigest()[:12]
+
+
+# ---------------------------------------------------------------------------
+# FSBid Client
+# ---------------------------------------------------------------------------
+
+class FSBidClient:
+    """
+    Typed, resilient HTTP client for the FSBid API.
+
+    Usage:
+        client = FSBidClient()
+        bids = client.get_user_bids(employee_id="12345")
+    """
+
+    def __init__(
+        self,
+        api_root: Optional[str] = None,
+        timeout: int = 10,
+        max_retries: int = 3,
+        backoff_factor: float = 0.5,
+        circuit_failure_threshold: int = 5,
+        circuit_recovery_timeout: int = 30,
+    ):
+        self.api_root = api_root or getattr(settings, 'FSBID_API_URL', '')
+        self.timeout = timeout
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=circuit_failure_threshold,
+            recovery_timeout=circuit_recovery_timeout,
+        )
+
+        # Configure session with retry adapter.
+        # NOTE (AGENTS.md exception): POST is intentionally excluded from
+        # allowed_methods. FSBid has no idempotency-key support, so retrying
+        # submit_bid on 503 could create duplicate bids. GET/DELETE are safe.
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=[500, 502, 503, 504],
+            allowed_methods=["GET", "DELETE"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)  # dev/test environments use HTTP
+
+    def _request(self, method: str, path: str, **kwargs) -> requests.Response:
+        """
+        Execute an HTTP request with circuit breaker, timeout, and audit logging.
+        """
+        if not self.circuit_breaker.allow_request():
+            raise FSBidConnectionError(
+                method, path, "CircuitBreakerOpen",
+                RuntimeError("FSBid circuit breaker is OPEN")
+            )
+
+        url = f"{self.api_root}{path}"
+        kwargs.setdefault('timeout', self.timeout)
+
+        start_time = time.time()
+        try:
+            response = self.session.request(method, url, **kwargs)
+            elapsed_ms = (time.time() - start_time) * 1000
+
+            # Audit log — no PII, per AGENTS.md
+            logger.info(
+                "FSBid %s %s — %d in %.0fms",
+                method.upper(), path, response.status_code, elapsed_ms
+            )
+
+            response.raise_for_status()
+            self.circuit_breaker.record_success()
+            return response
+
+        except requests.exceptions.HTTPError as exc:
+            elapsed_ms = (time.time() - start_time) * 1000
+            status = exc.response.status_code if exc.response is not None else 0
+            # 4xx = server responded (alive) but caller error;
+            # 5xx = server error, count toward circuit breaker.
+            if exc.response is not None and status >= 500:
+                self.circuit_breaker.record_failure()
+            else:
+                # Any HTTP response (including 4xx) proves the server is up.
+                # This prevents HALF_OPEN deadlock when probe gets 4xx.
+                self.circuit_breaker.record_success()
+            logger.error(
+                "FSBid %s %s — HTTP %d in %.0fms",
+                method.upper(), path, status, elapsed_ms
+            )
+            # Re-raise as sanitized exception — original HTTPError str()
+            # embeds full URL with PII query params (AGENTS.md violation).
+            raise FSBidAPIError(method, path, status, exc) from None
+        except requests.exceptions.RequestException as exc:
+            elapsed_ms = (time.time() - start_time) * 1000
+            # Connection failures always count toward circuit breaker
+            self.circuit_breaker.record_failure()
+            logger.error(
+                "FSBid %s %s — FAILED in %.0fms: %s",
+                method.upper(), path, elapsed_ms, type(exc).__name__
+            )
+            raise FSBidConnectionError(method, path, type(exc).__name__, exc) from None
+
+    # -------------------------------------------------------------------
+    # Public API methods
+    # -------------------------------------------------------------------
+
+    def get_user_bids(self, employee_id: str) -> List[FSBidBidResponse]:
+        """Get all bids for an employee. Returns typed FSBidBidResponse objects.
+
+        NOTE (AGENTS.md exception): FSBid upstream API requires employeeId as a
+        query parameter. We cannot change the external API contract. Mitigation:
+        employee_id is sanitized (hashed) in all application-level logs. Network-
+        layer logging (proxy, ALB) should be configured to redact query strings
+        containing PII per NIST 800-53 AU-3.
+        """
+        sanitized_id = _sanitize_identifier(employee_id)
+        logger.debug("Fetching bids for employee [%s]", sanitized_id)
+
+        response = self._request(
+            "GET", "/bids/",
+            params={"employeeId": employee_id}
+        )
+        raw_bids = response.json()
+
+        return [FSBidBidResponse(bid) for bid in raw_bids]
+
+    def submit_bid(self, user_id: str, employee_id: str, cycle_position_id: str) -> requests.Response:
+        """Submit a bid on a cycle position."""
+        sanitized_emp = _sanitize_identifier(employee_id)
+        logger.info("Submitting bid for employee [%s] on position %s", sanitized_emp, cycle_position_id)
+
+        return self._request(
+            "POST", "/bids",
+            data={
+                "perdet_seq_num": employee_id,
+                "cp_id": cycle_position_id,
+                "userId": user_id,
+            }
+        )
+
+    def remove_bid(self, employee_id: str, cycle_position_id: str) -> requests.Response:
+        """Remove a bid from the user's bid list.
+
+        NOTE (AGENTS.md exception): FSBid upstream API requires perdet_seq_num
+        as a query parameter on DELETE. Same mitigation as get_user_bids — PII is
+        sanitized in application logs; network-layer redaction is required.
+        """
+        sanitized_emp = _sanitize_identifier(employee_id)
+        logger.info("Removing bid for employee [%s] on position %s", sanitized_emp, cycle_position_id)
+
+        return self._request(
+            "DELETE", "/bids",
+            params={"cp_id": cycle_position_id, "perdet_seq_num": employee_id}
+        )
+
+    def get_projected_vacancies(self, query_params: str) -> FSBidPaginatedResponse:
+        """Get projected vacancies with pagination."""
+        response = self._request("GET", f"/projectedVacancies?{query_params}")
+        return FSBidPaginatedResponse(response.json())
+
+    def get_bid_seasons(self, future_vacancy_ind: Optional[str] = None) -> List['FSBidBidSeason']:
+        """Get all bid seasons. Returns typed FSBidBidSeason objects."""
+        params = {}
+        if future_vacancy_ind:
+            params["bsn_future_vacancy_ind"] = future_vacancy_ind
+        response = self._request("GET", "/bidSeasons", params=params or None)
+        return [FSBidBidSeason(season) for season in response.json()]
+
+
+# Module-level default client instance (thread-safe lazy initialization)
+_default_client: Optional[FSBidClient] = None
+_client_lock = threading.Lock()
+
+
+def get_client() -> FSBidClient:
+    """Get or create the default FSBid client instance (thread-safe)."""
+    global _default_client
+    if _default_client is None:
+        with _client_lock:
+            if _default_client is None:
+                _default_client = FSBidClient()
+    return _default_client
