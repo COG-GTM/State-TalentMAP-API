@@ -234,7 +234,7 @@ class Command(BaseCommand):
             lines.append(f"#### {model['name']}")
             if model["doc"]:
                 lines.append("")
-                lines.append(f"> {model['doc'][:200]}")
+                lines.append(f"> {model['doc'][:200].replace(chr(10), ' ')}")
             lines.append("")
             audit = "Yes" if model["has_history"] else "No"
             lines.append(f"- **Audit trail (simple_history):** {audit}")
