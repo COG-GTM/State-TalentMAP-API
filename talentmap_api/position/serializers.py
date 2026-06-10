@@ -85,6 +85,46 @@ class AssignmentSerializer(CurrentAssignmentSerializer):
         }
 
 
+class OfficerAssignmentHistorySerializer(PrefetchedSerializer):
+    grade = serializers.SerializerMethodField()
+    tour_of_duty = StaticRepresentationField(read_only=True)
+
+    def get_grade(self, obj):
+        if obj.position and obj.position.grade:
+            return obj.position.grade._string_representation
+        return None
+
+    class Meta:
+        model = Assignment
+        fields = [
+            "id",
+            "status",
+            "grade",
+            "start_date",
+            "end_date",
+            "estimated_end_date",
+            "tour_of_duty",
+            "service_duration",
+            "is_domestic",
+            "combined_differential",
+        ]
+        nested = {
+            "position": {
+                "class": "talentmap_api.position.serializers.PositionSerializer",
+                "field": "position",
+                "kwargs": {
+                    "override_fields": [
+                        "id",
+                        "position_number",
+                        "title",
+                        "post__location",
+                    ],
+                    "read_only": True
+                }
+            }
+        }
+
+
 class ClassificationSerializer(PrefetchedSerializer):
 
     class Meta:

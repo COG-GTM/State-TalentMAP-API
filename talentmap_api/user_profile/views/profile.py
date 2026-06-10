@@ -9,7 +9,7 @@ from talentmap_api.common.mixins import ActionDependentSerializerMixin, FieldLim
 
 from talentmap_api.position.models import Assignment
 from talentmap_api.user_profile.models import UserProfile
-from talentmap_api.position.serializers import AssignmentSerializer
+from talentmap_api.position.serializers import AssignmentSerializer, OfficerAssignmentHistorySerializer
 from talentmap_api.user_profile.serializers import (UserProfileSerializer,
                                                     UserProfilePublicSerializer,
                                                     UserProfileWritableSerializer)
@@ -70,3 +70,23 @@ class UserAssignmentHistoryView(FieldLimitableSerializerMixin,
 
     def get_queryset(self):
         return get_prefetched_filtered_queryset(Assignment, self.serializer_class, user=self.request.user.profile)
+
+
+class OfficerAssignmentHistoryView(FieldLimitableSerializerMixin,
+                                   GenericViewSet,
+                                   mixins.ListModelMixin):
+    '''
+    list:
+    Returns the full assignment history for the specified officer,
+    including post location, grade at time of assignment, and tour dates.
+    '''
+
+    serializer_class = OfficerAssignmentHistorySerializer
+    permission_classes = (IsAuthenticated,)
+    filter_class = AssignmentFilter
+
+    def get_queryset(self):
+        officer = get_object_or_404(UserProfile, pk=self.request.parser_context.get("kwargs").get("pk"))
+        queryset = officer.assignments.all().order_by('-start_date')
+        queryset = self.serializer_class.prefetch_model(Assignment, queryset)
+        return queryset

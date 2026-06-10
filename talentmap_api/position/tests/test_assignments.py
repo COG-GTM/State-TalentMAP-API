@@ -1,6 +1,8 @@
 import pytest
 from dateutil.relativedelta import relativedelta
 
+from rest_framework import status
+
 from talentmap_api.position.models import Position, Assignment
 from talentmap_api.organization.models import TourOfDuty
 from talentmap_api.user_profile.models import UserProfile
@@ -100,3 +102,58 @@ def test_assignment_service_duration(authorized_client, authorized_user, test_as
     assignment.refresh_from_db()
 
     assert assignment.service_duration == 12
+
+
+@pytest.mark.django_db(transaction=True)
+def test_officer_assignment_history_endpoint(authorized_client, authorized_user):
+    position = mommy.make_recipe('talentmap_api.position.tests.position')
+    tod = mommy.make('organization.TourOfDuty', months=24)
+    Assignment.objects.create(
+        user=authorized_user.profile,
+        position=position,
+        tour_of_duty=tod,
+        start_date="2020-06-01T00:00:00Z",
+        estimated_end_date="2022-06-01T00:00:00Z",
+        bid_approval_date="2020-01-15T00:00:00Z",
+    )
+
+    response = authorized_client.get(f'/api/v1/profile/{authorized_user.profile.id}/assignment_history/')
+    assert response.status_code == status.HTTP_200_OK
+    assert len(response.data["results"]) == 1
+
+    record = response.data["results"][0]
+    assert "position" in record
+    assert "grade" in record
+    assert "start_date" in record
+    assert "end_date" in record
+    assert "estimated_end_date" in record
+    assert "tour_of_duty" in record
+
+
+@pytest.mark.django_db(transaction=True)
+def test_officer_assignment_history_multiple(authorized_client, authorized_user):
+    tod = mommy.make('organization.TourOfDuty', months=12)
+    for _ in range(3):
+        pos = mommy.make_recipe('talentmap_api.position.tests.position')
+        Assignment.objects.create(
+            user=authorized_user.profile,
+            position=pos,
+            tour_of_duty=tod,
+            bid_approval_date="1991-01-01T00:00:00Z",
+        )
+
+    response = authorized_client.get(f'/api/v1/profile/{authorized_user.profile.id}/assignment_history/')
+    assert response.status_code == status.HTTP_200_OK
+    assert len(response.data["results"]) == 3
+
+
+@pytest.mark.django_db(transaction=True)
+def test_officer_assignment_history_not_found(authorized_client, authorized_user):
+    response = authorized_client.get('/api/v1/profile/99999/assignment_history/')
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db(transaction=True)
+def test_officer_assignment_history_unauthenticated(client):
+    response = client.get('/api/v1/profile/1/assignment_history/')
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
