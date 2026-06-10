@@ -370,9 +370,9 @@ class FSBidClientTest(TestCase):
         client.circuit_breaker.record_failure()
         client.circuit_breaker.record_failure()
 
-        with self.assertRaises(ConnectionError) as ctx:
+        with self.assertRaises(FSBidConnectionError) as ctx:
             client._request("GET", "/bids/")
-        self.assertIn("circuit breaker is OPEN", str(ctx.exception))
+        self.assertIn("CircuitBreakerOpen", str(ctx.exception))
 
 
 @override_settings(FSBID_API_URL="https://fsbid-test.state.gov/api/v1")

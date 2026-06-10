@@ -45,7 +45,6 @@ class FSBidAPIError(Exception):
         self.method = method
         self.path = path
         self.status_code = status_code
-        self.original = original
         # Preserve the response object for callers that need status inspection
         self.response = getattr(original, 'response', None)
         super().__init__(
@@ -60,7 +59,6 @@ class FSBidConnectionError(Exception):
         self.method = method
         self.path = path
         self.exc_type = exc_type
-        self.original = original
         super().__init__(
             f"FSBid {method.upper()} {path} connection failed: {exc_type}"
         )
@@ -308,9 +306,9 @@ class FSBidClient:
         Execute an HTTP request with circuit breaker, timeout, and audit logging.
         """
         if not self.circuit_breaker.allow_request():
-            raise ConnectionError(
-                "FSBid circuit breaker is OPEN — service presumed unavailable. "
-                "Requests will resume after recovery timeout."
+            raise FSBidConnectionError(
+                method, path, "CircuitBreakerOpen",
+                RuntimeError("FSBid circuit breaker is OPEN")
             )
 
         url = f"{self.api_root}{path}"
@@ -348,7 +346,7 @@ class FSBidClient:
             )
             # Re-raise as sanitized exception — original HTTPError str()
             # embeds full URL with PII query params (AGENTS.md violation).
-            raise FSBidAPIError(method, path, status, exc) from exc
+            raise FSBidAPIError(method, path, status, exc) from None
         except requests.exceptions.RequestException as exc:
             elapsed_ms = (time.time() - start_time) * 1000
             # Connection failures always count toward circuit breaker
@@ -357,7 +355,7 @@ class FSBidClient:
                 "FSBid %s %s — FAILED in %.0fms: %s",
                 method.upper(), path, elapsed_ms, type(exc).__name__
             )
-            raise FSBidConnectionError(method, path, type(exc).__name__, exc) from exc
+            raise FSBidConnectionError(method, path, type(exc).__name__, exc) from None
 
     # -------------------------------------------------------------------
     # Public API methods
