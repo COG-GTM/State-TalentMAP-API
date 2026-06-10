@@ -5,7 +5,7 @@ Uses the typed FSBidClient (client.py) instead of raw requests calls.
 Maintains 100% functional equivalence with services.py — all public functions
 return the same data structures, same types, same behavior.
 
-Per .staterules:
+Per AGENTS.md:
 - All FSBid integration must go through the typed client
 - PII fields must never appear in logs
 - External service calls must implement retry with exponential backoff

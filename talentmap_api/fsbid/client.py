@@ -8,7 +8,7 @@ Replaces raw requests.get/post calls with:
 - Audit logging with PII sanitization
 - Configurable timeouts
 
-Per .staterules: All FSBid integration must go through this typed client.
+Per AGENTS.md: All FSBid integration must go through this typed client.
 """
 
 import hashlib
@@ -249,7 +249,7 @@ class FSBidClient:
             response = self.session.request(method, url, **kwargs)
             elapsed_ms = (time.time() - start_time) * 1000
 
-            # Audit log — no PII, per .staterules
+            # Audit log — no PII, per AGENTS.md
             logger.info(
                 "FSBid %s %s — %d in %.0fms",
                 method.upper(), path, response.status_code, elapsed_ms
@@ -289,7 +289,7 @@ class FSBidClient:
     def get_user_bids(self, employee_id: str) -> List[FSBidBidResponse]:
         """Get all bids for an employee. Returns typed FSBidBidResponse objects.
 
-        NOTE (.staterules exception): FSBid upstream API requires employeeId as a
+        NOTE (AGENTS.md exception): FSBid upstream API requires employeeId as a
         query parameter. We cannot change the external API contract. Mitigation:
         employee_id is sanitized (hashed) in all application-level logs. Network-
         layer logging (proxy, ALB) should be configured to redact query strings
@@ -323,7 +323,7 @@ class FSBidClient:
     def remove_bid(self, employee_id: str, cycle_position_id: str) -> requests.Response:
         """Remove a bid from the user's bid list.
 
-        NOTE (.staterules exception): FSBid upstream API requires perdet_seq_num
+        NOTE (AGENTS.md exception): FSBid upstream API requires perdet_seq_num
         as a query parameter on DELETE. Same mitigation as get_user_bids — PII is
         sanitized in application logs; network-layer redaction is required.
         """

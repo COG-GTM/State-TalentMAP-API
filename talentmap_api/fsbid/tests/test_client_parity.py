@@ -4,7 +4,7 @@ Parity tests: services_v2 (typed client) produces identical output to services (
 These tests capture real FSBid response fixtures and assert that both the legacy
 services module and the modernized services_v2 module produce byte-identical output.
 
-Per .staterules:
+Per AGENTS.md:
 - Integration tests must use mocked FSBid responses (no live calls in CI)
 - Functional parity tests required for any integration refactor
 """
