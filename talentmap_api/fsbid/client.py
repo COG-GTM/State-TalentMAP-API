@@ -287,11 +287,21 @@ class FSBidClient:
     # -------------------------------------------------------------------
 
     def get_user_bids(self, employee_id: str) -> List[FSBidBidResponse]:
-        """Get all bids for an employee. Returns typed FSBidBidResponse objects."""
+        """Get all bids for an employee. Returns typed FSBidBidResponse objects.
+
+        NOTE (.staterules exception): FSBid upstream API requires employeeId as a
+        query parameter. We cannot change the external API contract. Mitigation:
+        employee_id is sanitized (hashed) in all application-level logs. Network-
+        layer logging (proxy, ALB) should be configured to redact query strings
+        containing PII per NIST 800-53 AU-3.
+        """
         sanitized_id = _sanitize_identifier(employee_id)
         logger.debug("Fetching bids for employee [%s]", sanitized_id)
 
-        response = self._request("GET", f"/bids/?employeeId={employee_id}")
+        response = self._request(
+            "GET", "/bids/",
+            params={"employeeId": employee_id}
+        )
         raw_bids = response.json()
 
         return [FSBidBidResponse(bid) for bid in raw_bids]
