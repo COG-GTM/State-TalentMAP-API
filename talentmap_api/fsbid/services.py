@@ -45,7 +45,7 @@ def fsbid_call(func):
             upstream_status = e.response.status_code if e.response is not None else None
             if upstream_status and 400 <= upstream_status < 500:
                 logger.warning("FSBid rejected request in %s with status %s", func.__name__, upstream_status)
-                raise FSBidRejectedException()
+                raise FSBidRejectedException(detail=f'The bidding service rejected the request (upstream status {upstream_status}).')
             logger.exception("FSBid request failed in %s with status %s", func.__name__, upstream_status)
             raise FSBidUnavailableException()
         except requests.exceptions.RequestException:
