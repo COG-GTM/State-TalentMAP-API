@@ -259,8 +259,22 @@ class FSBidClient:
             self.circuit_breaker.record_success()
             return response
 
+        except requests.exceptions.HTTPError as exc:
+            elapsed_ms = (time.time() - start_time) * 1000
+            # Only count 5xx server errors toward circuit breaker;
+            # 4xx client errors are caller mistakes, not FSBid being down.
+            if exc.response is not None and exc.response.status_code >= 500:
+                self.circuit_breaker.record_failure()
+            logger.error(
+                "FSBid %s %s — HTTP %d in %.0fms",
+                method.upper(), path,
+                exc.response.status_code if exc.response is not None else 0,
+                elapsed_ms
+            )
+            raise
         except requests.exceptions.RequestException as exc:
             elapsed_ms = (time.time() - start_time) * 1000
+            # Connection failures always count toward circuit breaker
             self.circuit_breaker.record_failure()
             logger.error(
                 "FSBid %s %s — FAILED in %.0fms: %s",

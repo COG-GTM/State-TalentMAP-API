@@ -318,3 +318,21 @@ class FSBidClientTest(TestCase):
         with self.assertRaises(ConnectionError) as ctx:
             client._request("GET", "/bids/")
         self.assertIn("circuit breaker is OPEN", str(ctx.exception))
+
+
+@override_settings(FSBID_API_URL="http://fsbid-test.state.gov/api/v1")
+class BidSeasonParityTest(TestCase):
+    """Verify bid season transformation parity."""
+
+    def test_bid_season_transform_parity(self):
+        """services_v2 applies the same transform as legacy services."""
+        sample_season = {
+            "bsn_id": "242",
+            "bsn_descr_text": "Fall 2024 Bidding Cycle",
+            "bsn_start_date": "2024/03/01",
+            "bsn_end_date": "2024/06/30",
+            "bsn_panel_cutoff_date": "2024/05/15"
+        }
+        legacy = legacy_services.fsbid_bid_season_to_talentmap_bid_season(sample_season)
+        modern = modern_services.fsbid_bid_season_to_talentmap_bid_season(sample_season)
+        self.assertEqual(legacy, modern)

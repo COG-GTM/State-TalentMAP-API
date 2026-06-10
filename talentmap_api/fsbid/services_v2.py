@@ -293,6 +293,22 @@ def get_bid_seasons(future_vacancy_ind=None):
     """
     Gets all bid seasons from FSBid.
     Uses typed client instead of raw requests.
+    Applies fsbid_bid_season_to_talentmap_bid_season transform for parity.
     """
     client = get_client()
-    return client.get_bid_seasons(future_vacancy_ind)
+    raw_seasons = client.get_bid_seasons(future_vacancy_ind)
+    return list(map(fsbid_bid_season_to_talentmap_bid_season, raw_seasons))
+
+
+def fsbid_bid_season_to_talentmap_bid_season(bs):
+    """
+    Transform FSBid bid season response into TalentMap format.
+    Equivalent to services.fsbid_bid_season_to_talentmap_bid_season.
+    """
+    return {
+        "id": bs["bsn_id"],
+        "description": bs["bsn_descr_text"],
+        "start_date": datetime.strptime(bs["bsn_start_date"], "%Y/%m/%d"),
+        "end_date": datetime.strptime(bs["bsn_end_date"], "%Y/%m/%d"),
+        "panel_cut_off_date": datetime.strptime(bs["bsn_panel_cutoff_date"], "%Y/%m/%d")
+    }
