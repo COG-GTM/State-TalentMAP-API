@@ -304,10 +304,17 @@ def get_bid_seasons(future_vacancy_ind=None):
     Gets all bid seasons from FSBid.
     Uses typed client instead of raw requests.
     Applies fsbid_bid_season_to_talentmap_bid_season transform for parity.
+
+    NOTE: Legacy services.py:260-262 constructs a filter URL but never uses it
+    (always fetches all seasons regardless of filter). This implementation
+    correctly passes the filter to FSBid, fixing the legacy bug.
     """
     client = get_client()
-    raw_seasons = client.get_bid_seasons(future_vacancy_ind)
-    return list(map(fsbid_bid_season_to_talentmap_bid_season, raw_seasons))
+    typed_seasons = client.get_bid_seasons(future_vacancy_ind)
+    return list(map(
+        fsbid_bid_season_to_talentmap_bid_season,
+        [season._raw for season in typed_seasons]
+    ))
 
 
 def fsbid_bid_season_to_talentmap_bid_season(bs):

@@ -10,6 +10,7 @@ Per AGENTS.md:
 """
 
 import json
+import logging
 from datetime import datetime
 from unittest.mock import patch, MagicMock
 
@@ -18,8 +19,8 @@ from django.test import TestCase, override_settings
 from talentmap_api.fsbid import services as legacy_services
 from talentmap_api.fsbid import services_v2 as modern_services
 from talentmap_api.fsbid.client import (
-    FSBidClient, FSBidBidResponse, CircuitBreaker, CircuitState,
-    _sanitize_identifier,
+    FSBidClient, FSBidBidResponse, FSBidBidSeason,
+    CircuitBreaker, CircuitState, _sanitize_identifier,
 )
 
 
@@ -103,7 +104,7 @@ SAMPLE_PV_API_RESPONSE = {
 }
 
 
-@override_settings(FSBID_API_URL="http://fsbid-test.state.gov/api/v1")
+@override_settings(FSBID_API_URL="https://fsbid-test.state.gov/api/v1")
 class BidTransformParityTest(TestCase):
     """
     Verify that services.fsbid_bid_to_talentmap_bid and
@@ -262,6 +263,45 @@ class CircuitBreakerTest(TestCase):
         self.assertTrue(cb.allow_request())
         self.assertEqual(cb.state, CircuitState.HALF_OPEN)
 
+    def test_half_open_allows_only_one_request(self):
+        """HALF_OPEN must allow exactly one test request, then block."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0)
+        cb.record_failure()
+        cb.record_failure()
+        self.assertEqual(cb.state, CircuitState.OPEN)
+
+        # First call after recovery_timeout transitions to HALF_OPEN and allows
+        self.assertTrue(cb.allow_request())
+        self.assertEqual(cb.state, CircuitState.HALF_OPEN)
+
+        # Second call in HALF_OPEN must be blocked
+        self.assertFalse(cb.allow_request())
+        self.assertEqual(cb.state, CircuitState.HALF_OPEN)
+
+        # Third call also blocked
+        self.assertFalse(cb.allow_request())
+
+    def test_half_open_success_closes_circuit(self):
+        """Successful request in HALF_OPEN closes the circuit."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0)
+        cb.record_failure()
+        cb.record_failure()
+        self.assertTrue(cb.allow_request())  # transitions to HALF_OPEN
+        cb.record_success()
+        self.assertEqual(cb.state, CircuitState.CLOSED)
+        # All requests pass again
+        self.assertTrue(cb.allow_request())
+        self.assertTrue(cb.allow_request())
+
+    def test_half_open_failure_reopens_circuit(self):
+        """Failed request in HALF_OPEN re-opens the circuit."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0)
+        cb.record_failure()
+        cb.record_failure()
+        self.assertTrue(cb.allow_request())  # transitions to HALF_OPEN
+        cb.record_failure()
+        self.assertEqual(cb.state, CircuitState.OPEN)
+
 
 class PIISanitizationTest(TestCase):
     """Verify PII is properly hashed before logging."""
@@ -288,7 +328,7 @@ class PIISanitizationTest(TestCase):
         self.assertNotEqual(a, b)
 
 
-@override_settings(FSBID_API_URL="http://fsbid-test.state.gov/api/v1")
+@override_settings(FSBID_API_URL="https://fsbid-test.state.gov/api/v1")
 class FSBidClientTest(TestCase):
     """Test the FSBidClient itself."""
 
@@ -320,7 +360,7 @@ class FSBidClientTest(TestCase):
         self.assertIn("circuit breaker is OPEN", str(ctx.exception))
 
 
-@override_settings(FSBID_API_URL="http://fsbid-test.state.gov/api/v1")
+@override_settings(FSBID_API_URL="https://fsbid-test.state.gov/api/v1")
 class BidSeasonParityTest(TestCase):
     """Verify bid season transformation parity."""
 
@@ -336,3 +376,72 @@ class BidSeasonParityTest(TestCase):
         legacy = legacy_services.fsbid_bid_season_to_talentmap_bid_season(sample_season)
         modern = modern_services.fsbid_bid_season_to_talentmap_bid_season(sample_season)
         self.assertEqual(legacy, modern)
+
+    @patch('talentmap_api.fsbid.client.FSBidClient._request')
+    def test_get_bid_seasons_returns_typed(self, mock_request):
+        """get_bid_seasons returns typed FSBidBidSeason objects."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = [{
+            "bsn_id": "242",
+            "bsn_descr_text": "Fall 2024",
+            "bsn_start_date": "2024/03/01",
+            "bsn_end_date": "2024/06/30",
+            "bsn_panel_cutoff_date": "2024/05/15"
+        }]
+        mock_request.return_value = mock_response
+
+        client = FSBidClient()
+        seasons = client.get_bid_seasons()
+        self.assertEqual(len(seasons), 1)
+        self.assertIsInstance(seasons[0], FSBidBidSeason)
+        self.assertEqual(seasons[0].bsn_id, "242")
+
+
+@override_settings(FSBID_API_URL="https://fsbid-test.state.gov/api/v1")
+class PIILogCaptureTest(TestCase):
+    """Verify no raw PII leaks into application logs during FSBid operations."""
+
+    @patch('talentmap_api.fsbid.client.FSBidClient._request')
+    def test_get_user_bids_no_pii_in_logs(self, mock_request):
+        """Employee ID must not appear raw in any log output."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_request.return_value = mock_response
+
+        employee_id = "98765432"
+        with self.assertLogs('talentmap_api.fsbid.client', level='DEBUG') as cm:
+            client = FSBidClient()
+            client.get_user_bids(employee_id)
+
+        all_logs = '\n'.join(cm.output)
+        self.assertNotIn(employee_id, all_logs)
+
+    @patch('talentmap_api.fsbid.client.FSBidClient._request')
+    def test_submit_bid_no_pii_in_logs(self, mock_request):
+        """Employee ID must not appear raw in submit_bid logs."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_request.return_value = mock_response
+
+        employee_id = "11223344"
+        with self.assertLogs('talentmap_api.fsbid.client', level='DEBUG') as cm:
+            client = FSBidClient()
+            client.submit_bid("user1", employee_id, "cp100")
+
+        all_logs = '\n'.join(cm.output)
+        self.assertNotIn(employee_id, all_logs)
+
+    @patch('talentmap_api.fsbid.client.FSBidClient._request')
+    def test_remove_bid_no_pii_in_logs(self, mock_request):
+        """Employee ID must not appear raw in remove_bid logs."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_request.return_value = mock_response
+
+        employee_id = "55667788"
+        with self.assertLogs('talentmap_api.fsbid.client', level='DEBUG') as cm:
+            client = FSBidClient()
+            client.remove_bid(employee_id, "cp200")
+
+        all_logs = '\n'.join(cm.output)
+        self.assertNotIn(employee_id, all_logs)

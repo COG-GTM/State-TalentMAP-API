@@ -13,6 +13,7 @@ Per AGENTS.md: All FSBid integration must go through this typed client.
 
 import hashlib
 import logging
+import threading
 import time
 from datetime import datetime
 from enum import Enum
@@ -127,6 +128,23 @@ class FSBidPaginatedResponse:
         ]
 
 
+class FSBidBidSeason:
+    """Typed representation of a bid season from FSBid API."""
+    __slots__ = (
+        'bsn_id', 'bsn_descr_text', 'bsn_start_date', 'bsn_end_date',
+        'bsn_panel_cutoff_date', 'bsn_future_vacancy_ind', '_raw'
+    )
+
+    def __init__(self, data: Dict[str, Any]):
+        self.bsn_id = data.get('bsn_id', '')
+        self.bsn_descr_text = data.get('bsn_descr_text', '')
+        self.bsn_start_date = data.get('bsn_start_date', '')
+        self.bsn_end_date = data.get('bsn_end_date', '')
+        self.bsn_panel_cutoff_date = data.get('bsn_panel_cutoff_date', '')
+        self.bsn_future_vacancy_ind = data.get('bsn_future_vacancy_ind', '')
+        self._raw = data
+
+
 # ---------------------------------------------------------------------------
 # Circuit breaker
 # ---------------------------------------------------------------------------
@@ -152,31 +170,45 @@ class CircuitBreaker:
         self.state = CircuitState.CLOSED
         self.failure_count = 0
         self.last_failure_time = 0.0
+        self._lock = threading.Lock()
+        self._half_open_permitted = False
 
     def record_success(self):
-        self.failure_count = 0
-        self.state = CircuitState.CLOSED
+        with self._lock:
+            self.failure_count = 0
+            self.state = CircuitState.CLOSED
+            self._half_open_permitted = False
 
     def record_failure(self):
-        self.failure_count += 1
-        self.last_failure_time = time.time()
-        if self.failure_count >= self.failure_threshold:
-            self.state = CircuitState.OPEN
-            logger.warning(
-                "FSBid circuit breaker OPEN — %d consecutive failures",
-                self.failure_count
-            )
+        with self._lock:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.state == CircuitState.HALF_OPEN:
+                self.state = CircuitState.OPEN
+                self._half_open_permitted = False
+            if self.failure_count >= self.failure_threshold:
+                self.state = CircuitState.OPEN
+                self._half_open_permitted = False
+                logger.warning(
+                    "FSBid circuit breaker OPEN — %d consecutive failures",
+                    self.failure_count
+                )
 
     def allow_request(self) -> bool:
-        if self.state == CircuitState.CLOSED:
-            return True
-        if self.state == CircuitState.OPEN:
-            if time.time() - self.last_failure_time >= self.recovery_timeout:
-                self.state = CircuitState.HALF_OPEN
+        with self._lock:
+            if self.state == CircuitState.CLOSED:
+                return True
+            if self.state == CircuitState.OPEN:
+                if time.time() - self.last_failure_time >= self.recovery_timeout:
+                    self.state = CircuitState.HALF_OPEN
+                    self._half_open_permitted = True
+                    return True
+                return False
+            # HALF_OPEN — allow exactly one test request
+            if self._half_open_permitted:
+                self._half_open_permitted = False
                 return True
             return False
-        # HALF_OPEN — allow one test request
-        return True
 
 
 # ---------------------------------------------------------------------------
@@ -225,11 +257,10 @@ class FSBidClient:
             total=max_retries,
             backoff_factor=backoff_factor,
             status_forcelist=[500, 502, 503, 504],
-            allowed_methods=["GET", "POST", "DELETE"],
+            allowed_methods=["GET", "DELETE"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
         """
@@ -340,22 +371,25 @@ class FSBidClient:
         response = self._request("GET", f"/projectedVacancies?{query_params}")
         return FSBidPaginatedResponse(response.json())
 
-    def get_bid_seasons(self, future_vacancy_ind: Optional[str] = None) -> list:
-        """Get all bid seasons."""
+    def get_bid_seasons(self, future_vacancy_ind: Optional[str] = None) -> List['FSBidBidSeason']:
+        """Get all bid seasons. Returns typed FSBidBidSeason objects."""
         path = "/bidSeasons/"
         if future_vacancy_ind:
             path += f"?bsn_future_vacancy_ind={future_vacancy_ind}"
         response = self._request("GET", path)
-        return response.json()
+        return [FSBidBidSeason(season) for season in response.json()]
 
 
-# Module-level default client instance (lazy initialization)
+# Module-level default client instance (thread-safe lazy initialization)
 _default_client: Optional[FSBidClient] = None
+_client_lock = threading.Lock()
 
 
 def get_client() -> FSBidClient:
-    """Get or create the default FSBid client instance."""
+    """Get or create the default FSBid client instance (thread-safe)."""
     global _default_client
     if _default_client is None:
-        _default_client = FSBidClient()
+        with _client_lock:
+            if _default_client is None:
+                _default_client = FSBidClient()
     return _default_client
