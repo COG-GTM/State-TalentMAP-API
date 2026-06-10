@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, Mock, MagicMock, PropertyMock
+from unittest.mock import patch, Mock, MagicMock
 
 from django.core.exceptions import SuspiciousOperation
 from django.test import RequestFactory
@@ -36,22 +36,25 @@ def _make_mock_client():
     return client
 
 
-# -----------------------------------------------------------------------
-# Patch stack shared by most tests – patches external deps so
-# assertion_consumer_service can be imported and called without a real
-# SAML IdP / Django SAML config.
-# -----------------------------------------------------------------------
-COMMON_PATCHES = [
-    patch(MODULE + '.get_config', return_value=MagicMock()),
-    patch(MODULE + '.get_custom_setting', side_effect=lambda key, default=None: default),
-    patch(MODULE + '.IdentityCache', return_value=MagicMock()),
-    patch(MODULE + '.OutstandingQueriesCache'),
-    patch(MODULE + '.Saml2Client', side_effect=lambda *a, **kw: _make_mock_client()),
-]
+@pytest.fixture(autouse=True)
+def _patch_saml_deps():
+    """Start common patches before each test, stop them after (even on failure)."""
+    patches = [
+        patch(MODULE + '.get_config', return_value=MagicMock()),
+        patch(MODULE + '.get_custom_setting', side_effect=lambda key, default=None: default),
+        patch(MODULE + '.IdentityCache', return_value=MagicMock()),
+        patch(MODULE + '.OutstandingQueriesCache'),
+        patch(MODULE + '.Saml2Client', side_effect=lambda *a, **kw: _make_mock_client()),
+    ]
+    for p in patches:
+        p.start()
+    yield
+    for p in patches:
+        p.stop()
 
 
 # -----------------------------------------------------------------------
-# 1. Missing SAMLResponse → SuspiciousOperation
+# 1. Missing SAMLResponse -> SuspiciousOperation
 # -----------------------------------------------------------------------
 class TestMissingSAMLResponse:
 
@@ -60,13 +63,8 @@ class TestMissingSAMLResponse:
         from talentmap_api.saml2.acs_patch import assertion_consumer_service
 
         request = _post_request(data={})
-        mocks = [p.start() for p in COMMON_PATCHES]
-        try:
-            with pytest.raises(SuspiciousOperation):
-                assertion_consumer_service(request)
-        finally:
-            for p in COMMON_PATCHES:
-                p.stop()
+        with pytest.raises(SuspiciousOperation):
+            assertion_consumer_service(request)
 
 
 # -----------------------------------------------------------------------
@@ -74,157 +72,45 @@ class TestMissingSAMLResponse:
 # -----------------------------------------------------------------------
 class TestSAMLParsingErrors:
 
+    def _assert_error_returns_fail_acs(self, exc):
+        from talentmap_api.saml2.acs_patch import assertion_consumer_service
+
+        request = _post_request(data={'SAMLResponse': 'dummyxml'})
+        sentinel = Mock(name='fail_response')
+
+        mock_client = _make_mock_client()
+        mock_client._parse_response.side_effect = exc
+
+        with patch(MODULE + '.fail_acs_response', return_value=sentinel), \
+             patch(MODULE + '.Saml2Client', return_value=mock_client):
+            result = assertion_consumer_service(request)
+
+        assert result is sentinel
+
     @pytest.mark.parametrize('exc_class', [
         StatusError,
         ToEarly,
     ])
     def test_status_error_or_too_early(self, exc_class):
-        from talentmap_api.saml2.acs_patch import assertion_consumer_service
-
-        request = _post_request(data={'SAMLResponse': 'dummyxml'})
-        sentinel = Mock(name='fail_response')
-
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
-        # Make _parse_response raise the target exception
-        mock_client = _make_mock_client()
-        mock_client._parse_response.side_effect = exc_class()
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
-            result = assertion_consumer_service(request)
-
-        assert result is sentinel
-        for p in patches:
-            p.stop()
+        self._assert_error_returns_fail_acs(exc_class())
 
     def test_response_lifetime_exceed(self):
-        from talentmap_api.saml2.acs_patch import assertion_consumer_service
-
-        request = _post_request(data={'SAMLResponse': 'dummyxml'})
-        sentinel = Mock(name='fail_response')
-
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
-        mock_client = _make_mock_client()
-        mock_client._parse_response.side_effect = ResponseLifetimeExceed()
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
-            result = assertion_consumer_service(request)
-
-        assert result is sentinel
-        for p in patches:
-            p.stop()
+        self._assert_error_returns_fail_acs(ResponseLifetimeExceed())
 
     def test_signature_error(self):
-        from talentmap_api.saml2.acs_patch import assertion_consumer_service
-
-        request = _post_request(data={'SAMLResponse': 'dummyxml'})
-        sentinel = Mock(name='fail_response')
-
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
-        mock_client = _make_mock_client()
-        mock_client._parse_response.side_effect = SignatureError()
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
-            result = assertion_consumer_service(request)
-
-        assert result is sentinel
-        for p in patches:
-            p.stop()
+        self._assert_error_returns_fail_acs(SignatureError())
 
     def test_status_authn_failed(self):
-        from talentmap_api.saml2.acs_patch import assertion_consumer_service
-
-        request = _post_request(data={'SAMLResponse': 'dummyxml'})
-        sentinel = Mock(name='fail_response')
-
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
-        mock_client = _make_mock_client()
-        mock_client._parse_response.side_effect = StatusAuthnFailed()
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
-            result = assertion_consumer_service(request)
-
-        assert result is sentinel
-        for p in patches:
-            p.stop()
+        self._assert_error_returns_fail_acs(StatusAuthnFailed())
 
     def test_status_request_denied(self):
-        from talentmap_api.saml2.acs_patch import assertion_consumer_service
-
-        request = _post_request(data={'SAMLResponse': 'dummyxml'})
-        sentinel = Mock(name='fail_response')
-
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
-        mock_client = _make_mock_client()
-        mock_client._parse_response.side_effect = StatusRequestDenied()
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
-            result = assertion_consumer_service(request)
-
-        assert result is sentinel
-        for p in patches:
-            p.stop()
+        self._assert_error_returns_fail_acs(StatusRequestDenied())
 
     def test_missing_key(self):
-        from talentmap_api.saml2.acs_patch import assertion_consumer_service
-
-        request = _post_request(data={'SAMLResponse': 'dummyxml'})
-        sentinel = Mock(name='fail_response')
-
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
-        mock_client = _make_mock_client()
-        mock_client._parse_response.side_effect = MissingKey()
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
-            result = assertion_consumer_service(request)
-
-        assert result is sentinel
-        for p in patches:
-            p.stop()
+        self._assert_error_returns_fail_acs(MissingKey())
 
     def test_unsolicited_response(self):
-        from talentmap_api.saml2.acs_patch import assertion_consumer_service
-
-        request = _post_request(data={'SAMLResponse': 'dummyxml'})
-        sentinel = Mock(name='fail_response')
-
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
-        mock_client = _make_mock_client()
-        mock_client._parse_response.side_effect = UnsolicitedResponse()
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
-            result = assertion_consumer_service(request)
-
-        assert result is sentinel
-        for p in patches:
-            p.stop()
+        self._assert_error_returns_fail_acs(UnsolicitedResponse())
 
     def test_none_response_returns_fail_acs(self):
         """When _parse_response returns None, fail_acs_response is called."""
@@ -233,24 +119,18 @@ class TestSAMLParsingErrors:
         request = _post_request(data={'SAMLResponse': 'dummyxml'})
         sentinel = Mock(name='fail_response')
 
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '.fail_acs_response', return_value=sentinel),
-        ]
-        for p in patches:
-            p.start()
-
         mock_client = _make_mock_client()
         mock_client._parse_response.return_value = None
-        with patch(MODULE + '.Saml2Client', return_value=mock_client):
+
+        with patch(MODULE + '.fail_acs_response', return_value=sentinel), \
+             patch(MODULE + '.Saml2Client', return_value=mock_client):
             result = assertion_consumer_service(request)
 
         assert result is sentinel
-        for p in patches:
-            p.stop()
 
 
 # -----------------------------------------------------------------------
-# 3. Successful SAML auth → user created/updated, token created, redirect
+# 3. Successful SAML auth -> user created/updated, token created, redirect
 # -----------------------------------------------------------------------
 @pytest.mark.django_db()
 class TestSuccessfulSAMLAuth:
@@ -279,19 +159,11 @@ class TestSuccessfulSAMLAuth:
         mock_client = _make_mock_client()
         mock_client._parse_response.return_value = mock_response
 
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '._set_subject_id'),
-        ]
-        for p in patches:
-            p.start()
-
         with patch(MODULE + '.Saml2Client', return_value=mock_client), \
+             patch(MODULE + '._set_subject_id'), \
              patch(MODULE + '.settings') as mock_settings:
             mock_settings.LOGIN_REDIRECT_URL = 'https://app.example.com/login'
             result = assertion_consumer_service(request)
-
-        for p in patches:
-            p.stop()
 
         return result
 
@@ -335,9 +207,6 @@ class TestSuccessfulSAMLAuth:
         token = ExpiringToken.objects.get(user=user)
         old_key = token.key
 
-        # Simulate expired token by patching expired()
-        # Don't pass existing_user=True since _run_success already created
-        # the user above; get_or_create in acs_patch will find it.
         with patch.object(ExpiringToken, 'expired', return_value=True):
             self._run_success(existing_user=False)
 
@@ -369,27 +238,16 @@ class TestCreateUnknownUserSetting:
 
         captured = {}
 
-        original_get_custom_setting = None
-
         def spy_get_custom_setting(key, default=None):
             captured[key] = default
             return default
 
-        patches = COMMON_PATCHES[:]
-        # Override the get_custom_setting patch with our spy
-        patches[1] = patch(MODULE + '.get_custom_setting', side_effect=spy_get_custom_setting)
-        patches.append(patch(MODULE + '._set_subject_id'))
-
-        for p in patches:
-            p.start()
-
-        with patch(MODULE + '.Saml2Client', return_value=mock_client), \
+        with patch(MODULE + '.get_custom_setting', side_effect=spy_get_custom_setting), \
+             patch(MODULE + '.Saml2Client', return_value=mock_client), \
+             patch(MODULE + '._set_subject_id'), \
              patch(MODULE + '.settings') as mock_settings:
             mock_settings.LOGIN_REDIRECT_URL = 'https://app.example.com/login'
             assertion_consumer_service(request)
-
-        for p in patches:
-            p.stop()
 
         assert 'SAML_ATTRIBUTE_MAPPING' in captured
         assert captured['SAML_ATTRIBUTE_MAPPING'] == {'uid': ('username', )}
@@ -413,19 +271,11 @@ class TestCreateUnknownUserSetting:
         mock_client = _make_mock_client()
         mock_client._parse_response.return_value = mock_response
 
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '._set_subject_id'),
-        ]
-        for p in patches:
-            p.start()
-
         with patch(MODULE + '.Saml2Client', return_value=mock_client), \
+             patch(MODULE + '._set_subject_id'), \
              patch(MODULE + '.settings') as mock_settings:
             mock_settings.LOGIN_REDIRECT_URL = 'https://app.example.com/login'
             result = assertion_consumer_service(request, create_unknown_user=True)
-
-        for p in patches:
-            p.stop()
 
         assert result.status_code == 302
         assert User.objects.filter(email='newuser@example.com').exists()
@@ -446,19 +296,11 @@ class TestCreateUnknownUserSetting:
         mock_client = _make_mock_client()
         mock_client._parse_response.return_value = mock_response
 
-        patches = COMMON_PATCHES + [
-            patch(MODULE + '._set_subject_id'),
-        ]
-        for p in patches:
-            p.start()
-
         with patch(MODULE + '.Saml2Client', return_value=mock_client), \
+             patch(MODULE + '._set_subject_id'), \
              patch(MODULE + '.settings') as mock_settings:
             mock_settings.LOGIN_REDIRECT_URL = 'https://app.example.com/login'
             result = assertion_consumer_service(request, create_unknown_user=False)
-
-        for p in patches:
-            p.stop()
 
         # The function still creates via get_or_create on User model
         # regardless of create_unknown_user param (it's read but not
