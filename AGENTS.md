@@ -7,7 +7,7 @@ TalentMAP is the Foreign Service assignment and bidding system. It handles sensi
 - All database queries must use parameterized statements (no string interpolation)
 - All API endpoints must validate authentication via SAML2 or token middleware
 - PII fields (employee IDs, names, post assignments) must never appear in logs
-- All external API calls must use TLS 1.2+ with certificate validation
+- All external API calls must use TLS 1.2+ with certificate validation in production (dev/test environments may use HTTP per deploy.sh config)
 - Session tokens must expire after 15 minutes of inactivity
 - All cryptographic operations must use FIPS 140-2 validated algorithms
 - No sensitive data in URL parameters — use request body or headers

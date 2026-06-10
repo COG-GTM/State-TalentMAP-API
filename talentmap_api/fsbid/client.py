@@ -201,13 +201,12 @@ class CircuitBreaker:
             if self.state == CircuitState.OPEN:
                 if time.time() - self.last_failure_time >= self.recovery_timeout:
                     self.state = CircuitState.HALF_OPEN
-                    self._half_open_permitted = True
+                    # The transition call IS the one allowed probe;
+                    # set flag to False so no subsequent call sneaks through.
+                    self._half_open_permitted = False
                     return True
                 return False
-            # HALF_OPEN — allow exactly one test request
-            if self._half_open_permitted:
-                self._half_open_permitted = False
-                return True
+            # HALF_OPEN — no additional requests until probe resolves
             return False
 
 
@@ -261,6 +260,7 @@ class FSBidClient:
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)  # dev/test environments use HTTP
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
         """
@@ -292,10 +292,14 @@ class FSBidClient:
 
         except requests.exceptions.HTTPError as exc:
             elapsed_ms = (time.time() - start_time) * 1000
-            # Only count 5xx server errors toward circuit breaker;
-            # 4xx client errors are caller mistakes, not FSBid being down.
+            # 4xx = server responded (alive) but caller error;
+            # 5xx = server error, count toward circuit breaker.
             if exc.response is not None and exc.response.status_code >= 500:
                 self.circuit_breaker.record_failure()
+            else:
+                # Any HTTP response (including 4xx) proves the server is up.
+                # This prevents HALF_OPEN deadlock when probe gets 4xx.
+                self.circuit_breaker.record_success()
             logger.error(
                 "FSBid %s %s — HTTP %d in %.0fms",
                 method.upper(), path,

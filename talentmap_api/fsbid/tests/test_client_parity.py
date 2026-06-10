@@ -302,6 +302,19 @@ class CircuitBreakerTest(TestCase):
         cb.record_failure()
         self.assertEqual(cb.state, CircuitState.OPEN)
 
+    def test_half_open_4xx_closes_circuit(self):
+        """4xx response during HALF_OPEN probe closes circuit (server is alive)."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0)
+        cb.record_failure()
+        cb.record_failure()
+        self.assertEqual(cb.state, CircuitState.OPEN)
+        self.assertTrue(cb.allow_request())  # transitions to HALF_OPEN
+        # Simulating: server returned 4xx → record_success() is called
+        # (since a 4xx proves the server is responsive)
+        cb.record_success()
+        self.assertEqual(cb.state, CircuitState.CLOSED)
+        self.assertTrue(cb.allow_request())
+
 
 class PIISanitizationTest(TestCase):
     """Verify PII is properly hashed before logging."""
