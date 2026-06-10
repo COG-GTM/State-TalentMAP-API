@@ -2,10 +2,14 @@ import requests
 import logging
 
 from datetime import datetime
+from functools import wraps
 
 from urllib.parse import urlencode
 
 from django.conf import settings
+
+from rest_framework import status
+from rest_framework.exceptions import APIException
 
 from talentmap_api.bidding.models import Bid
 
@@ -16,6 +20,28 @@ API_ROOT = settings.FSBID_API_URL
 REQUEST_TIMEOUT = 30
 
 
+class FSBidUnavailableException(APIException):
+    status_code = status.HTTP_502_BAD_GATEWAY
+    default_detail = 'The upstream bidding service is unavailable.'
+    default_code = 'fsbid_unavailable'
+
+
+def fsbid_call(func):
+    '''
+    Translates upstream request failures into a DRF APIException so views
+    return a 502 instead of an unhandled 500
+    '''
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except requests.exceptions.RequestException:
+            logger.exception("FSBid request failed in %s", func.__name__)
+            raise FSBidUnavailableException()
+    return wrapper
+
+
+@fsbid_call
 def user_bids(employee_id, position_id=None):
     '''
     Get bids for a user on a position or all if no position
@@ -26,6 +52,7 @@ def user_bids(employee_id, position_id=None):
     return [fsbid_bid_to_talentmap_bid(bid) for bid in bids if bid['cyclePosition']['cp_id'] == int(position_id)] if position_id else map(fsbid_bid_to_talentmap_bid, bids)
 
 
+@fsbid_call
 def bid_on_position(userId, employeeId, cyclePositionId, statusCode=None):
     '''
     Submits a bid on a position
@@ -38,6 +65,7 @@ def bid_on_position(userId, employeeId, cyclePositionId, statusCode=None):
     return response
 
 
+@fsbid_call
 def remove_bid(employeeId, cyclePositionId):
     '''
     Removes a bid from the users bid list
@@ -140,6 +168,7 @@ def fsbid_bid_to_talentmap_bid(data):
     }
 
 
+@fsbid_call
 def get_projected_vacancies(query, host=None):
     '''
     Gets projected vacancies from FSBid
@@ -270,6 +299,7 @@ def fsbid_pv_to_talentmap_pv(pv):
     }
 
 
+@fsbid_call
 def get_bid_seasons(bsn_future_vacancy_ind):
     params = {"bsn_future_vacancy_ind": bsn_future_vacancy_ind} if bsn_future_vacancy_ind else None
     response = requests.get(f"{API_ROOT}/bidSeasons", params=params, timeout=REQUEST_TIMEOUT)
