@@ -43,7 +43,7 @@ def fsbid_call(func):
             return func(*args, **kwargs)
         except requests.exceptions.HTTPError as e:
             upstream_status = e.response.status_code if e.response is not None else None
-            if upstream_status and 400 <= upstream_status < 500:
+            if upstream_status and 400 <= upstream_status < 500 and upstream_status not in (401, 403):
                 logger.warning("FSBid rejected request in %s with status %s", func.__name__, upstream_status)
                 raise FSBidRejectedException(detail=f'The bidding service rejected the request (upstream status {upstream_status}).')
             logger.exception("FSBid request failed in %s with status %s", func.__name__, upstream_status)
