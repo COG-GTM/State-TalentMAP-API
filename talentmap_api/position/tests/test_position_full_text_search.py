@@ -45,3 +45,16 @@ def test_available_filtering(client, term, expected_count):
     response = client.get(f'/api/v1/position/?q={term}')
     assert response.status_code == status.HTTP_200_OK
     assert len(response.data["results"]) == expected_count
+
+
+@pytest.mark.django_db()
+@pytest.mark.usefixtures("test_position_fts_fixture")
+def test_full_text_search_vector_evaluated_once(client):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as queries:
+        response = client.get('/api/v1/position/?q=embassy')
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["count"] == 2
+    assert len([q for q in queries.captured_queries if "to_tsvector" in q["sql"]]) == 1

@@ -142,7 +142,9 @@ def full_text_search(fields):
         # sort the queryset which is un-needed at this stage of filtering.
 
         # Use queryset.all() to acquire a duplicate of the queryset
-        id_list = queryset.all().annotate(search=final_vector).filter(q_obj).values_list('id', flat=True)
+        # The ids are evaluated once here; left as a subquery, the costly search vector
+        # would be recomputed by every query on the result (e.g. pagination's count and page)
+        id_list = list(queryset.all().annotate(search=final_vector).filter(q_obj).values_list('id', flat=True))
         return queryset.filter(id__in=id_list)
     return filter_method
 
